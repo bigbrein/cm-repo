@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+/* Class-based dark mode: `dark:` variants apply when an ancestor carries
+   `.dark` (toggled by ThemeToggle / the pre-hydration script in layout.tsx),
+   not purely by OS preference. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  /* Calm, muted slate-teal palette — soft surfaces, desaturated accent,
+     no pure black/white. */
+  --background: #f4f6f7;
+  --foreground: #263238;
+  --surface: #ffffff;
+  --surface-muted: #eef1f2;
+  --border: #dde3e5;
+  --muted-foreground: #64767d;
+
+  --primary: #3f6b74;
+  --primary-hover: #345a62;
+  --primary-foreground: #f4f9fa;
+}
+
+.dark {
+  --background: #161c1f;
+  --foreground: #dbe4e6;
+  --surface: #1e262a;
+  --surface-muted: #232c30;
+  --border: #303a3f;
+  --muted-foreground: #8b9ba0;
+
+  --primary: #6b9aa3;
+  --primary-hover: #7ba9b1;
+  --primary-foreground: #0f1618;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-border: var(--border);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", monospace;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+/* Minimal content styling for the Tiptap rich text editor (FR-UPL-3) —
+   Tailwind's preflight strips default list/heading styles globally, so
+   restore just enough for a composed CM letter to be legible. */
+.tiptap-content p {
+  margin: 0.5em 0;
+}
+.tiptap-content ul {
+  list-style: disc;
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+.tiptap-content ol {
+  list-style: decimal;
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+.tiptap-content strong {
+  font-weight: 600;
+}
+.tiptap-content em {
+  font-style: italic;
+}
