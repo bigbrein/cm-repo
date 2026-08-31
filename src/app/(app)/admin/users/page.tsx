@@ -1,8 +1,10 @@
 import { redirect } from "next/navigation";
-import { prisma } from "@/lib/prisma";
+import { asc, eq } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { users as usersTable, departments as departmentsTable } from "@/db/schema";
 import { getCurrentUser } from "@/lib/session";
 import { ROLE_LABELS } from "@/lib/rbac";
-import type { UserRole } from "@/generated/prisma/enums";
+import type { UserRole } from "@/db/schema";
 import { AccessDenied } from "@/components/access-denied";
 import { updateUserAction } from "./actions";
 
@@ -13,10 +15,15 @@ export default async function AdminUsersPage() {
   if (!user) redirect("/login");
   if (!user.permissions.canManageUsers) return <AccessDenied />;
 
-  const [users, departments] = await Promise.all([
-    prisma.user.findMany({ include: { department: true }, orderBy: { createdAt: "asc" } }),
-    prisma.department.findMany({ orderBy: { name: "asc" } }),
+  const [userRows, departments] = await Promise.all([
+    db
+      .select({ user: usersTable, department: departmentsTable })
+      .from(usersTable)
+      .leftJoin(departmentsTable, eq(usersTable.departmentId, departmentsTable.id))
+      .orderBy(asc(usersTable.createdAt)),
+    db.select().from(departmentsTable).orderBy(asc(departmentsTable.name)),
   ]);
+  const users = userRows.map((r) => ({ ...r.user, department: r.department }));
 
   return (
     <div className="overflow-x-auto rounded-lg border border-border">

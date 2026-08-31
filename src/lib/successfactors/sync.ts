@@ -1,5 +1,7 @@
 import "server-only";
-import { prisma } from "@/lib/prisma";
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { departments, employees } from "@/db/schema";
 import { writeAuditLog } from "@/lib/audit";
 import { getSuccessFactorsClient } from "./index";
 
@@ -36,33 +38,31 @@ export async function syncEmployeesFromSuccessFactors(actorUserId: string | null
   const newlyTerminated: string[] = [];
 
   for (const sfEmployee of roster) {
-    const department = await prisma.department.upsert({
-      where: { code: sfEmployee.departmentCode },
-      update: { name: sfEmployee.departmentName },
-      create: { code: sfEmployee.departmentCode, name: sfEmployee.departmentName },
-    });
+    const [department] = await db
+      .insert(departments)
+      .values({ code: sfEmployee.departmentCode, name: sfEmployee.departmentName })
+      .onConflictDoUpdate({ target: departments.code, set: { name: sfEmployee.departmentName } })
+      .returning();
 
     const fullName = `${sfEmployee.firstName} ${sfEmployee.lastName}`;
     const initials = `${sfEmployee.firstName[0] ?? ""}${sfEmployee.lastName[0] ?? ""}`.toUpperCase();
 
-    const existing = await prisma.employee.findUnique({ where: { employeeId: sfEmployee.employeeId } });
+    const [existing] = await db.select().from(employees).where(eq(employees.employeeId, sfEmployee.employeeId)).limit(1);
 
     if (!existing) {
-      await prisma.employee.create({
-        data: {
-          employeeId: sfEmployee.employeeId,
-          firstName: sfEmployee.firstName,
-          lastName: sfEmployee.lastName,
-          fullName,
-          initials,
-          email: sfEmployee.email,
-          jobTitle: sfEmployee.jobTitle,
-          departmentId: department.id,
-          employmentStatus: sfEmployee.employmentStatus,
-          hireDate: sfEmployee.hireDate ? new Date(sfEmployee.hireDate) : null,
-          sourceSystem: "SuccessFactors",
-          lastSyncedAt: new Date(),
-        },
+      await db.insert(employees).values({
+        employeeId: sfEmployee.employeeId,
+        firstName: sfEmployee.firstName,
+        lastName: sfEmployee.lastName,
+        fullName,
+        initials,
+        email: sfEmployee.email,
+        jobTitle: sfEmployee.jobTitle,
+        departmentId: department!.id,
+        employmentStatus: sfEmployee.employmentStatus,
+        hireDate: sfEmployee.hireDate ? new Date(sfEmployee.hireDate) : null,
+        sourceSystem: "SuccessFactors",
+        lastSyncedAt: new Date(),
       });
       created++;
       if (sfEmployee.employmentStatus === "TERMINATED") newlyTerminated.push(sfEmployee.employeeId);
@@ -74,31 +74,31 @@ export async function syncEmployeesFromSuccessFactors(actorUserId: string | null
       existing.lastName !== sfEmployee.lastName ||
       existing.email !== sfEmployee.email ||
       existing.jobTitle !== sfEmployee.jobTitle ||
-      existing.departmentId !== department.id ||
+      existing.departmentId !== department!.id ||
       existing.employmentStatus !== sfEmployee.employmentStatus;
 
     if (changed) {
       if (existing.employmentStatus !== "TERMINATED" && sfEmployee.employmentStatus === "TERMINATED") {
         newlyTerminated.push(sfEmployee.employeeId);
       }
-      await prisma.employee.update({
-        where: { id: existing.id },
-        data: {
+      await db
+        .update(employees)
+        .set({
           firstName: sfEmployee.firstName,
           lastName: sfEmployee.lastName,
           fullName,
           initials,
           email: sfEmployee.email,
           jobTitle: sfEmployee.jobTitle,
-          departmentId: department.id,
+          departmentId: department!.id,
           employmentStatus: sfEmployee.employmentStatus,
           sourceSystem: "SuccessFactors",
           lastSyncedAt: new Date(),
-        },
-      });
+        })
+        .where(eq(employees.id, existing.id));
       updated++;
     } else {
-      await prisma.employee.update({ where: { id: existing.id }, data: { lastSyncedAt: new Date() } });
+      await db.update(employees).set({ lastSyncedAt: new Date() }).where(eq(employees.id, existing.id));
       unchanged++;
     }
   }

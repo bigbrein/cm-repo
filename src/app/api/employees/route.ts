@@ -1,8 +1,10 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
+import { eq } from "drizzle-orm";
 import { withApiAuth } from "@/lib/session";
 import { createManualEmployee } from "@/lib/employees";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/lib/db";
+import { employees } from "@/db/schema";
 
 const ManualEmployeeSchema = z.object({
   employeeId: z.string().min(1).max(50),
@@ -31,7 +33,7 @@ export async function POST(request: NextRequest) {
         return Response.json({ error: "Cannot create an employee outside your department" }, { status: 403 });
       }
 
-      const existing = await prisma.employee.findUnique({ where: { employeeId } });
+      const [existing] = await db.select().from(employees).where(eq(employees.employeeId, employeeId)).limit(1);
       if (existing) {
         return Response.json({ error: "An employee with this ID already exists" }, { status: 409 });
       }

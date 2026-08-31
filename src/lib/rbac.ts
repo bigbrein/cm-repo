@@ -1,4 +1,4 @@
-import type { UserRole } from "@/generated/prisma/enums";
+import type { UserRole } from "@/db/schema";
 
 // Central permission matrix for the CM Repository System.
 //

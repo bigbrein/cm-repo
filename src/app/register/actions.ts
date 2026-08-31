@@ -3,7 +3,9 @@
 import { redirect } from "next/navigation";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { eq, count } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { users } from "@/db/schema";
 import { writeAuditLog } from "@/lib/audit";
 
 // FR-AUTH-7 (Could): basic registration page for provisioning internal
@@ -37,27 +39,28 @@ export async function registerAction(formData: FormData): Promise<void> {
   const { name, email, password } = parsed.data;
   const normalizedEmail = email.trim().toLowerCase();
 
-  const existing = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+  const [existing] = await db.select().from(users).where(eq(users.email, normalizedEmail)).limit(1);
   if (existing) {
     redirect("/register?error=EmailInUse");
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
-  const userCount = await prisma.user.count();
+  const [{ userCount }] = await db.select({ userCount: count() }).from(users);
 
-  const user = await prisma.user.create({
-    data: {
+  const [user] = await db
+    .insert(users)
+    .values({
       name,
       email: normalizedEmail,
       passwordHash,
-      role: userCount === 0 ? "ADMINISTRATOR" : "MANAGER_READONLY",
-    },
-  });
+      role: (userCount ?? 0) === 0 ? "ADMINISTRATOR" : "MANAGER_READONLY",
+    })
+    .returning();
 
   await writeAuditLog({
     action: "USER_CREATED",
-    actorUserId: user.id,
-    actorEmail: user.email,
+    actorUserId: user!.id,
+    actorEmail: user!.email,
     metadata: { provisionedVia: "self-service-registration" },
   });
 

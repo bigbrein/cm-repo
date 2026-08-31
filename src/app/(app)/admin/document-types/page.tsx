@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
-import { prisma } from "@/lib/prisma";
+import { asc } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { documentTypes as documentTypesTable } from "@/db/schema";
 import { getCurrentUser } from "@/lib/session";
 import { AccessDenied } from "@/components/access-denied";
 import { createDocumentTypeAction, toggleDocumentTypeAction } from "./actions";
@@ -9,7 +11,7 @@ export default async function AdminDocumentTypesPage() {
   if (!user) redirect("/login");
   if (!user.permissions.canManageLookups) return <AccessDenied />;
 
-  const documentTypes = await prisma.documentType.findMany({ orderBy: { sortOrder: "asc" } });
+  const documentTypes = await db.select().from(documentTypesTable).orderBy(asc(documentTypesTable.sortOrder));
 
   return (
     <div className="space-y-6">

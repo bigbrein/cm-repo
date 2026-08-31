@@ -1,6 +1,8 @@
 import "server-only";
 import { nanoid } from "nanoid";
-import { prisma } from "@/lib/prisma";
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { employees, documentTypes, cmDocuments } from "@/db/schema";
 import { getStorageAdapter } from "@/lib/storage";
 import { generateDocumentIdentity, computeExpiryDate } from "@/lib/naming";
 import { writeAuditLog } from "@/lib/audit";
@@ -37,13 +39,13 @@ export async function createCmDocument(user: CurrentUser, input: CreateCmDocumen
     throw new UploadValidationError("Provide exactly one of an uploaded file or composed letter text");
   }
 
-  const employee = await prisma.employee.findUnique({ where: { id: input.employeeId } });
+  const [employee] = await db.select().from(employees).where(eq(employees.id, input.employeeId)).limit(1);
   if (!employee) throw new UploadValidationError("Employee not found");
   if (user.permissions.isDepartmentScoped && user.departmentId && employee.departmentId !== user.departmentId) {
     throw new UploadValidationError("Cannot upload a CM document outside your assigned department");
   }
 
-  const documentType = await prisma.documentType.findUnique({ where: { id: input.documentTypeId } });
+  const [documentType] = await db.select().from(documentTypes).where(eq(documentTypes.id, input.documentTypeId)).limit(1);
   if (!documentType || !documentType.isActive) {
     throw new UploadValidationError("Invalid or inactive CM Type"); // BR-4
   }
@@ -61,15 +63,16 @@ export async function createCmDocument(user: CurrentUser, input: CreateCmDocumen
     await storage.putObject(fileKey, input.file.buffer, input.file.mimeType);
   }
 
-  const document = await prisma.$transaction(async (tx) => {
+  const document = await db.transaction(async (tx) => {
     const identity = await generateDocumentIdentity(tx, {
       initials: employee.initials,
       employeeId: employee.employeeId,
       dateIssued: input.dateIssued,
     });
 
-    return tx.cmDocument.create({
-      data: {
+    const [created] = await tx
+      .insert(cmDocuments)
+      .values({
         documentId: identity.documentId,
         documentName: identity.documentName,
         employeeId: employee.id,
@@ -84,9 +87,9 @@ export async function createCmDocument(user: CurrentUser, input: CreateCmDocumen
         bodyHtml: input.bodyHtml ?? null,
         uploadSessionId: input.uploadSessionId ?? null,
         uploadedById: user.id,
-      },
-      include: { employee: true, documentType: true },
-    });
+      })
+      .returning();
+    return { ...created!, employee, documentType };
   });
 
   await writeAuditLog({

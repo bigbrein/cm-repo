@@ -1,8 +1,9 @@
 import "server-only";
 import { nanoid } from "nanoid";
 import { addMonths } from "date-fns";
-import type { Prisma } from "@/generated/prisma/client";
-import { prisma } from "@/lib/prisma";
+import { eq, sql } from "drizzle-orm";
+import { db, type DbClient } from "@/lib/db";
+import { documentSequences, cmDocuments } from "@/db/schema";
 
 // 3.4 Document Metadata & Naming Convention
 // -----------------------------------------------------------------------
@@ -28,17 +29,15 @@ export function computeExpiryDate(dateIssued: Date, validPeriodMonths: number): 
  * the same month simultaneously will always be handed distinct,
  * monotonically increasing values.
  */
-async function nextSequenceForMonth(
-  monthKey: string,
-  client: Prisma.TransactionClient | typeof prisma = prisma
-): Promise<number> {
-  const rows = await client.$queryRaw<{ lastValue: number }[]>`
-    INSERT INTO "DocumentSequence" ("monthKey", "lastValue")
-    VALUES (${monthKey}, 1)
-    ON CONFLICT ("monthKey")
-    DO UPDATE SET "lastValue" = "DocumentSequence"."lastValue" + 1
-    RETURNING "lastValue"
-  `;
+async function nextSequenceForMonth(monthKey: string, client: DbClient = db): Promise<number> {
+  const rows = await client
+    .insert(documentSequences)
+    .values({ monthKey, lastValue: 1 })
+    .onConflictDoUpdate({
+      target: documentSequences.monthKey,
+      set: { lastValue: sql`${documentSequences.lastValue} + 1` },
+    })
+    .returning({ lastValue: documentSequences.lastValue });
   return rows[0]!.lastValue;
 }
 
@@ -64,7 +63,7 @@ export interface DocumentIdentity {
  * "claimed" by a half-completed upload for longer than the transaction.
  */
 export async function generateDocumentIdentity(
-  client: Prisma.TransactionClient | typeof prisma,
+  client: DbClient,
   params: { initials: string; employeeId: string; dateIssued: Date }
 ): Promise<DocumentIdentity> {
   const monthKey = computeMonthKey(params.dateIssued);
@@ -73,7 +72,11 @@ export async function generateDocumentIdentity(
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const sequence = await nextSequenceForMonth(monthKey, client);
     const documentName = formatDocumentName(params.initials, params.employeeId, monthKey, sequence);
-    const existing = await client.cmDocument.findUnique({ where: { documentName }, select: { id: true } });
+    const [existing] = await client
+      .select({ id: cmDocuments.id })
+      .from(cmDocuments)
+      .where(eq(cmDocuments.documentName, documentName))
+      .limit(1);
     if (!existing) {
       return { documentId: `DOC-${nanoid(10)}`, documentName };
     }

@@ -1,7 +1,8 @@
 import "server-only";
-import { prisma } from "@/lib/prisma";
+import { and, asc, count, desc, eq, ilike, or } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { cmDocuments, employees, departments, documentTypes } from "@/db/schema";
 import type { CurrentUser } from "@/lib/session";
-import type { Prisma } from "@/generated/prisma/client";
 import { activeStatusWhere, expiredStatusWhere } from "@/lib/status";
 
 export type StatusFilter = "ACTIVE" | "EXPIRED" | "ALL";
@@ -24,31 +25,29 @@ const DEFAULT_PAGE_SIZE = 25;
  * BR-7 / FR-AUTH-5: same department-scoping rule as employees.ts, applied
  * to CM Documents via the Employee relation.
  */
-export function cmDocumentScopeWhere(user: CurrentUser): Prisma.CmDocumentWhereInput {
+export function cmDocumentScopeWhere(user: CurrentUser) {
   if (user.permissions.isDepartmentScoped && user.departmentId) {
-    return { employee: { departmentId: user.departmentId } };
+    return eq(employees.departmentId, user.departmentId);
   }
-  return {};
+  return undefined;
 }
 
-function sortToOrderBy(
-  sort: SortColumn | undefined,
-  direction: SortDirection
-): Prisma.CmDocumentOrderByWithRelationInput {
+function sortToOrderBy(sort: SortColumn | undefined, direction: SortDirection) {
+  const dir = direction === "asc" ? asc : desc;
   switch (sort) {
     case "employeeName":
-      return { employee: { lastName: direction } };
+      return dir(employees.lastName);
     case "employeeId":
-      return { employee: { employeeId: direction } };
+      return dir(employees.employeeId);
     case "cmType":
-      return { documentType: { name: direction } };
+      return dir(documentTypes.name);
     case "documentName":
-      return { documentName: direction };
+      return dir(cmDocuments.documentName);
     case "expiryDate":
-      return { expiryDate: direction };
+      return dir(cmDocuments.expiryDate);
     case "dateIssued":
     default:
-      return { dateIssued: direction }; // FR-DASH-3 default
+      return dir(cmDocuments.dateIssued); // FR-DASH-3 default
   }
 }
 
@@ -60,37 +59,44 @@ export async function queryCmDocuments(user: CurrentUser, params: DashboardQuery
   const pageSize = params.pageSize ?? DEFAULT_PAGE_SIZE;
   const q = params.q?.trim();
 
-  const statusWhere: Prisma.CmDocumentWhereInput =
-    status === "ACTIVE" ? activeStatusWhere() : status === "EXPIRED" ? expiredStatusWhere() : {};
+  const statusWhere = status === "ACTIVE" ? activeStatusWhere() : status === "EXPIRED" ? expiredStatusWhere() : undefined;
 
-  const searchWhere: Prisma.CmDocumentWhereInput = q
-    ? {
-        OR: [
-          { employee: { fullName: { contains: q, mode: "insensitive" } } }, // FR-SRCH-1
-          { employee: { employeeId: { contains: q, mode: "insensitive" } } }, // FR-SRCH-2
-          { documentName: { contains: q, mode: "insensitive" } },
-          { documentId: { contains: q, mode: "insensitive" } },
-        ],
-      }
-    : {};
+  const searchWhere = q
+    ? or(
+        ilike(employees.fullName, `%${q}%`), // FR-SRCH-1
+        ilike(employees.employeeId, `%${q}%`), // FR-SRCH-2
+        ilike(cmDocuments.documentName, `%${q}%`),
+        ilike(cmDocuments.documentId, `%${q}%`)
+      )
+    : undefined;
 
-  const where: Prisma.CmDocumentWhereInput = {
-    isDeleted: false,
-    ...cmDocumentScopeWhere(user),
-    ...statusWhere,
-    ...searchWhere,
-  };
+  const where = and(eq(cmDocuments.isDeleted, false), cmDocumentScopeWhere(user), statusWhere, searchWhere);
 
-  const [rows, total] = await Promise.all([
-    prisma.cmDocument.findMany({
-      where,
-      include: { employee: { include: { department: true } }, documentType: true },
-      orderBy: sortToOrderBy(params.sort, direction),
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-    }),
-    prisma.cmDocument.count({ where }),
-  ]);
+  const rowsQuery = db
+    .select({ cmDocument: cmDocuments, employee: employees, department: departments, documentType: documentTypes })
+    .from(cmDocuments)
+    .innerJoin(employees, eq(cmDocuments.employeeId, employees.id))
+    .innerJoin(departments, eq(employees.departmentId, departments.id))
+    .innerJoin(documentTypes, eq(cmDocuments.documentTypeId, documentTypes.id))
+    .where(where)
+    .orderBy(sortToOrderBy(params.sort, direction))
+    .limit(pageSize)
+    .offset((page - 1) * pageSize);
+
+  const countQuery = db
+    .select({ total: count() })
+    .from(cmDocuments)
+    .innerJoin(employees, eq(cmDocuments.employeeId, employees.id))
+    .where(where);
+
+  const [rawRows, [totalRow]] = await Promise.all([rowsQuery, countQuery]);
+  const total = totalRow?.total ?? 0;
+
+  const rows = rawRows.map((r) => ({
+    ...r.cmDocument,
+    employee: { ...r.employee, department: r.department },
+    documentType: r.documentType,
+  }));
 
   return { rows, total, page, pageSize, pageCount: Math.max(1, Math.ceil(total / pageSize)) };
 }

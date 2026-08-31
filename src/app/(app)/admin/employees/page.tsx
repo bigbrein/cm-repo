@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
-import { prisma } from "@/lib/prisma";
+import { asc, desc, eq } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { employees as employeesTable, departments, auditLogs } from "@/db/schema";
 import { getCurrentUser } from "@/lib/session";
 import { AccessDenied } from "@/components/access-denied";
 import { triggerSyncAction } from "./actions";
@@ -15,16 +17,20 @@ export default async function AdminEmployeesPage() {
   if (!user) redirect("/login");
   if (!user.permissions.canManageIntegrations) return <AccessDenied />;
 
-  const [employees, lastSync] = await Promise.all([
-    prisma.employee.findMany({
-      include: { department: true },
-      orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
-    }),
-    prisma.auditLog.findFirst({
-      where: { action: "EMPLOYEE_SYNC" },
-      orderBy: { createdAt: "desc" },
-    }),
+  const [employeeRows, [lastSync]] = await Promise.all([
+    db
+      .select({ employee: employeesTable, department: departments })
+      .from(employeesTable)
+      .innerJoin(departments, eq(employeesTable.departmentId, departments.id))
+      .orderBy(asc(employeesTable.lastName), asc(employeesTable.firstName)),
+    db
+      .select()
+      .from(auditLogs)
+      .where(eq(auditLogs.action, "EMPLOYEE_SYNC"))
+      .orderBy(desc(auditLogs.createdAt))
+      .limit(1),
   ]);
+  const employees = employeeRows.map((r) => ({ ...r.employee, department: r.department }));
 
   const sfMode = process.env.SF_MODE === "odata" ? "Live SuccessFactors OData" : "Mock (demo data)";
   const summary = lastSync?.metadata as

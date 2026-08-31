@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
+import { asc, eq } from "drizzle-orm";
 import { getCurrentUser } from "@/lib/session";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/lib/db";
+import { documentTypes as documentTypesTable } from "@/db/schema";
 import { UploadForm } from "./upload-form";
 import { AccessDenied } from "@/components/access-denied";
 
@@ -9,11 +11,11 @@ export default async function UploadPage() {
   if (!user) redirect("/login");
   if (!user.permissions.canUploadDocuments) return <AccessDenied />;
 
-  const documentTypes = await prisma.documentType.findMany({
-    where: { isActive: true },
-    orderBy: { sortOrder: "asc" },
-    select: { id: true, name: true },
-  });
+  const documentTypes = await db
+    .select({ id: documentTypesTable.id, name: documentTypesTable.name })
+    .from(documentTypesTable)
+    .where(eq(documentTypesTable.isActive, true))
+    .orderBy(asc(documentTypesTable.sortOrder));
 
   return (
     <div>

@@ -1,5 +1,7 @@
 import "server-only";
-import { prisma } from "@/lib/prisma";
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { cmDocuments, employees, departments, documentTypes } from "@/db/schema";
 import type { CurrentUser } from "@/lib/session";
 
 /**
@@ -9,15 +11,19 @@ import type { CurrentUser } from "@/lib/session";
  * can't distinguish the two (no existence leakage).
  */
 export async function getAccessibleDocument(user: CurrentUser, documentId: string) {
-  const doc = await prisma.cmDocument.findUnique({
-    where: { id: documentId },
-    include: { employee: { include: { department: true } }, documentType: true },
-  });
+  const [row] = await db
+    .select({ cmDocument: cmDocuments, employee: employees, department: departments, documentType: documentTypes })
+    .from(cmDocuments)
+    .innerJoin(employees, eq(cmDocuments.employeeId, employees.id))
+    .innerJoin(departments, eq(employees.departmentId, departments.id))
+    .innerJoin(documentTypes, eq(cmDocuments.documentTypeId, documentTypes.id))
+    .where(eq(cmDocuments.id, documentId))
+    .limit(1);
 
-  if (!doc || doc.isDeleted) return null;
-  if (user.permissions.isDepartmentScoped && user.departmentId && doc.employee.departmentId !== user.departmentId) {
+  if (!row || row.cmDocument.isDeleted) return null;
+  if (user.permissions.isDepartmentScoped && user.departmentId && row.employee.departmentId !== user.departmentId) {
     return null;
   }
 
-  return doc;
+  return { ...row.cmDocument, employee: { ...row.employee, department: row.department }, documentType: row.documentType };
 }

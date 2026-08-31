@@ -2,9 +2,11 @@ import NextAuth, { CredentialsSignin } from "next-auth";
 import type { NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import MicrosoftEntraID from "next-auth/providers/microsoft-entra-id";
-import { PrismaAdapter } from "@auth/prisma-adapter";
+import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import bcrypt from "bcryptjs";
-import { prisma } from "@/lib/prisma";
+import { eq, count } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { users, accounts, sessions, verificationTokens } from "@/db/schema";
 import { writeAuditLog } from "@/lib/audit";
 
 // 3.1 Authentication & Authorization
@@ -20,7 +22,7 @@ import { writeAuditLog } from "@/lib/audit";
 // Because this MVP has no live enterprise tenant to integrate against, a
 // "dev credentials" provider is included as a runnable stand-in (gated by
 // ENABLE_DEV_LOGIN, on by default outside production). It authenticates
-// against seeded internal accounts (see prisma/seed.ts) rather than any
+// against seeded internal accounts (see src/db/seed.ts) rather than any
 // SuccessFactors/IdP data, and is the provider FR-AUTH-7's basic
 // registration page creates accounts for.
 
@@ -67,7 +69,7 @@ if (process.env.ENABLE_DEV_LOGIN !== "false") {
         const password = String(credentials?.password ?? "");
         const { ipAddress, userAgent } = requestMeta(request);
 
-        const user = await prisma.user.findUnique({ where: { email } });
+        const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
 
         if (!user || !user.passwordHash) {
           await writeAuditLog({
@@ -108,10 +110,7 @@ if (process.env.ENABLE_DEV_LOGIN !== "false") {
         if (!valid) {
           const attempts = user.failedLoginAttempts + 1;
           const lockedUntil = attempts >= MAX_FAILED_ATTEMPTS ? new Date(Date.now() + LOCKOUT_MINUTES * 60_000) : null;
-          await prisma.user.update({
-            where: { id: user.id },
-            data: { failedLoginAttempts: attempts, lockedUntil },
-          });
+          await db.update(users).set({ failedLoginAttempts: attempts, lockedUntil }).where(eq(users.id, user.id));
           await writeAuditLog({
             action: "LOGIN_FAILURE",
             actorUserId: user.id,
@@ -123,10 +122,7 @@ if (process.env.ENABLE_DEV_LOGIN !== "false") {
           throw new (lockedUntil ? AccountLockedError : InvalidCredentialsError)();
         }
 
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { failedLoginAttempts: 0, lockedUntil: null },
-        });
+        await db.update(users).set({ failedLoginAttempts: 0, lockedUntil: null }).where(eq(users.id, user.id));
 
         return {
           id: user.id,
@@ -150,7 +146,12 @@ function requestMeta(request: Request) {
 }
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  adapter: PrismaAdapter(prisma),
+  adapter: DrizzleAdapter(db, {
+    usersTable: users,
+    accountsTable: accounts,
+    sessionsTable: sessions,
+    verificationTokensTable: verificationTokens,
+  }),
   session: {
     strategy: "jwt",
     maxAge: ABSOLUTE_TIMEOUT_SECONDS, // FR-AUTH-3: absolute session timeout
@@ -224,9 +225,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // everything after defaults to the least-privileged role, per the
       // least-privilege mitigation in Appendix A. An admin can promote
       // users afterwards from the Admin > Users screen.
-      const userCount = await prisma.user.count();
-      const role = userCount <= 1 ? "ADMINISTRATOR" : "MANAGER_READONLY";
-      await prisma.user.update({ where: { id: user.id }, data: { role } });
+      const [{ userCount }] = await db.select({ userCount: count() }).from(users);
+      const role = (userCount ?? 0) <= 1 ? "ADMINISTRATOR" : "MANAGER_READONLY";
+      await db.update(users).set({ role }).where(eq(users.id, user.id));
       await writeAuditLog({
         action: "USER_CREATED",
         actorUserId: user.id ?? null,

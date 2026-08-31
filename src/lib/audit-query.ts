@@ -1,6 +1,8 @@
 import "server-only";
-import { prisma } from "@/lib/prisma";
-import type { Prisma, AuditAction } from "@/generated/prisma/client";
+import { and, count, desc, eq, gte, ilike, lte } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { auditLogs, users, cmDocuments } from "@/db/schema";
+import type { AuditAction } from "@/db/schema";
 
 export interface AuditLogQueryParams {
   action?: AuditAction;
@@ -20,29 +22,32 @@ export async function queryAuditLogs(params: AuditLogQueryParams) {
   const page = Math.max(1, params.page ?? 1);
   const pageSize = params.pageSize ?? DEFAULT_PAGE_SIZE;
 
-  const where: Prisma.AuditLogWhereInput = {
-    ...(params.action ? { action: params.action } : {}),
-    ...(params.actorQuery ? { actorEmail: { contains: params.actorQuery, mode: "insensitive" } } : {}),
-    ...(params.from || params.to
-      ? {
-          createdAt: {
-            ...(params.from ? { gte: new Date(params.from) } : {}),
-            ...(params.to ? { lte: new Date(params.to) } : {}),
-          },
-        }
-      : {}),
-  };
+  const where = and(
+    params.action ? eq(auditLogs.action, params.action) : undefined,
+    params.actorQuery ? ilike(auditLogs.actorEmail, `%${params.actorQuery}%`) : undefined,
+    params.from ? gte(auditLogs.createdAt, new Date(params.from)) : undefined,
+    params.to ? lte(auditLogs.createdAt, new Date(params.to)) : undefined
+  );
 
-  const [rows, total] = await Promise.all([
-    prisma.auditLog.findMany({
-      where,
-      include: { actor: { select: { name: true, email: true } }, cmDocument: { select: { documentName: true } } },
-      orderBy: { createdAt: "desc" },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-    }),
-    prisma.auditLog.count({ where }),
+  const [rawRows, [totalRow]] = await Promise.all([
+    db
+      .select({ auditLog: auditLogs, actor: { name: users.name, email: users.email }, cmDocument: { documentName: cmDocuments.documentName } })
+      .from(auditLogs)
+      .leftJoin(users, eq(auditLogs.actorUserId, users.id))
+      .leftJoin(cmDocuments, eq(auditLogs.cmDocumentId, cmDocuments.id))
+      .where(where)
+      .orderBy(desc(auditLogs.createdAt))
+      .limit(pageSize)
+      .offset((page - 1) * pageSize),
+    db.select({ total: count() }).from(auditLogs).where(where),
   ]);
+
+  const total = totalRow?.total ?? 0;
+  const rows = rawRows.map((r) => ({
+    ...r.auditLog,
+    actor: r.actor?.name != null || r.actor?.email != null ? r.actor : null,
+    cmDocument: r.cmDocument?.documentName != null ? r.cmDocument : null,
+  }));
 
   return { rows, total, page, pageSize, pageCount: Math.max(1, Math.ceil(total / pageSize)) };
 }

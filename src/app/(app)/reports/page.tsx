@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { asc } from "drizzle-orm";
 import { getCurrentUser } from "@/lib/session";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/lib/db";
+import { departments as departmentsTable } from "@/db/schema";
 import { getCmStatus } from "@/lib/status";
 import { StatusBadge } from "@/components/status-badge";
 import { AccessDenied } from "@/components/access-denied";
@@ -49,7 +51,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const departmentId = !user.permissions.isDepartmentScoped ? sp.departmentId : undefined;
 
   const departments = !user.permissions.isDepartmentScoped
-    ? await prisma.department.findMany({ orderBy: { name: "asc" } })
+    ? await db.select().from(departmentsTable).orderBy(asc(departmentsTable.name))
     : [];
 
   return (

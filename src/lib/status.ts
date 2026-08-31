@@ -1,4 +1,5 @@
-import type { Prisma } from "@/generated/prisma/client";
+import { gte, lt, type SQL } from "drizzle-orm";
+import { cmDocuments } from "@/db/schema";
 
 // 3.5 Status Logic
 // -----------------------------------------------------------------------
@@ -12,12 +13,12 @@ export function getCmStatus(expiryDate: Date, asOf: Date = new Date()): CmStatus
   return asOf.getTime() <= expiryDate.getTime() ? "ACTIVE" : "EXPIRED";
 }
 
-/** Prisma `where` fragment for FR-SRCH-3 (filter by Active). */
-export function activeStatusWhere(asOf: Date = new Date()): Prisma.CmDocumentWhereInput {
-  return { expiryDate: { gte: asOf } };
+/** Drizzle `where` fragment for FR-SRCH-3 (filter by Active). */
+export function activeStatusWhere(asOf: Date = new Date()): SQL {
+  return gte(cmDocuments.expiryDate, asOf);
 }
 
-/** Prisma `where` fragment for FR-SRCH-4 (filter by Expired). */
-export function expiredStatusWhere(asOf: Date = new Date()): Prisma.CmDocumentWhereInput {
-  return { expiryDate: { lt: asOf } };
+/** Drizzle `where` fragment for FR-SRCH-4 (filter by Expired). */
+export function expiredStatusWhere(asOf: Date = new Date()): SQL {
+  return lt(cmDocuments.expiryDate, asOf);
 }

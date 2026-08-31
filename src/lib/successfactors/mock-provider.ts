@@ -1,7 +1,7 @@
 import type { SFEmployeeRecord, SuccessFactorsClient } from "./types";
 
 // Stand-in "remote SuccessFactors tenant". This is intentionally kept
-// separate from prisma's Employee cache table — the sync job in sync.ts
+// separate from the Employee cache table — the sync job in sync.ts
 // reads from here and upserts into the cache, the same way it would read
 // from a real OData response. Toggle an entry's employmentStatus and
 // re-run the sync to see FR-SF-4 (termination sync) take effect.

@@ -2,13 +2,13 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/session";
 import { queryAuditLogs } from "@/lib/audit-query";
-import { AuditAction } from "@/generated/prisma/enums";
+import { auditActionEnum } from "@/db/schema";
 import { AccessDenied } from "@/components/access-denied";
 
 // 3.9 Audit Logging — Administrator/Auditor viewer over the append-only
-// AuditLog table (see lib/audit.ts for the write path and
-// prisma/manual-sql/audit-log-immutability.sql for the DB-level
-// enforcement of FR-AUD-4 / BR-6).
+// audit_log table (see lib/audit.ts for the write path and
+// drizzle/0001_audit_log_immutability.sql for the DB-level enforcement of
+// FR-AUD-4 / BR-6).
 
 const ACTION_LABELS: Record<string, string> = {
   LOGIN_SUCCESS: "Login succeeded",
@@ -52,8 +52,8 @@ export default async function AuditLogPage({ searchParams }: { searchParams: Pro
 
   const sp = await searchParams;
 
-  const validAction = Object.values(AuditAction).includes(sp.action as never)
-    ? (sp.action as keyof typeof AuditAction)
+  const validAction = auditActionEnum.enumValues.includes(sp.action as never)
+    ? (sp.action as (typeof auditActionEnum.enumValues)[number])
     : undefined;
   const page = Number(sp.page) > 0 ? Number(sp.page) : 1;
 
@@ -90,7 +90,7 @@ export default async function AuditLogPage({ searchParams }: { searchParams: Pro
             className="mt-1 rounded-md border border-border px-3 py-2 text-sm bg-surface"
           >
             <option value="">All actions</option>
-            {Object.values(AuditAction).map((a) => (
+            {auditActionEnum.enumValues.map((a) => (
               <option key={a} value={a}>
                 {ACTION_LABELS[a] ?? a}
               </option>

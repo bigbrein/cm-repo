@@ -1,9 +1,11 @@
+import { asc } from "drizzle-orm";
 import { withApiAuth } from "@/lib/session";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/lib/db";
+import { departments as departmentsTable } from "@/db/schema";
 
 export async function GET() {
   return withApiAuth(async () => {
-    const departments = await prisma.department.findMany({ orderBy: { name: "asc" } });
+    const departments = await db.select().from(departmentsTable).orderBy(asc(departmentsTable.name));
     return Response.json({ departments });
   });
 }

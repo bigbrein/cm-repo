@@ -2,8 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { eq, max } from "drizzle-orm";
 import { requirePermission } from "@/lib/session";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/lib/db";
+import { documentTypes } from "@/db/schema";
 
 // FR-MD-7: CM Type is a configurable lookup list, not hard-coded, so new
 // types can be added without a code change.
@@ -25,13 +27,11 @@ export async function createDocumentTypeAction(formData: FormData): Promise<void
   });
   if (!parsed.success) return;
 
-  const maxSort = await prisma.documentType.aggregate({ _max: { sortOrder: true } });
-  await prisma.documentType.create({
-    data: {
-      name: parsed.data.name,
-      code: parsed.data.code,
-      sortOrder: (maxSort._max.sortOrder ?? 0) + 1,
-    },
+  const [{ maxSortOrder }] = await db.select({ maxSortOrder: max(documentTypes.sortOrder) }).from(documentTypes);
+  await db.insert(documentTypes).values({
+    name: parsed.data.name,
+    code: parsed.data.code,
+    sortOrder: (maxSortOrder ?? 0) + 1,
   });
   revalidatePath("/admin/document-types");
 }
@@ -52,9 +52,9 @@ export async function toggleDocumentTypeAction(formData: FormData): Promise<void
   });
   if (!parsed.success) return;
 
-  await prisma.documentType.update({
-    where: { id: parsed.data.id },
-    data: { isActive: parsed.data.isActive === "true" },
-  });
+  await db
+    .update(documentTypes)
+    .set({ isActive: parsed.data.isActive === "true" })
+    .where(eq(documentTypes.id, parsed.data.id));
   revalidatePath("/admin/document-types");
 }

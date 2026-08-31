@@ -1,10 +1,12 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
+import { eq, sql } from "drizzle-orm";
 import { requireUser } from "@/lib/session";
 import { getAccessibleDocument } from "@/lib/document-access";
 import { authorizeEdit } from "@/lib/edit-window";
 import { computeExpiryDate } from "@/lib/naming";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/lib/db";
+import { cmDocuments, documentTypes } from "@/db/schema";
 import { writeAuditLog, requestMetadata } from "@/lib/audit";
 
 const EditSchema = z.object({
@@ -35,7 +37,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
     return Response.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const documentType = await prisma.documentType.findUnique({ where: { id: parsed.data.documentTypeId } });
+  const [documentType] = await db.select().from(documentTypes).where(eq(documentTypes.id, parsed.data.documentTypeId)).limit(1);
   if (!documentType || !documentType.isActive) {
     return Response.json({ error: "Invalid or inactive CM Type" }, { status: 422 }); // BR-4
   }
@@ -49,19 +51,20 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
     dateIssued: document.dateIssued.toISOString(),
   };
 
-  const updated = await prisma.cmDocument.update({
-    where: { id: document.id },
-    data: {
+  const [updatedDocument] = await db
+    .update(cmDocuments)
+    .set({
       documentTypeId: parsed.data.documentTypeId,
       validPeriodMonths: parsed.data.validPeriodMonths,
       dateIssued,
       expiryDate,
       lastEditedById: user.id,
       lastEditedAt: new Date(),
-      ...(authorization.isCorrection ? { correctionCount: { increment: 1 } } : {}),
-    },
-    include: { employee: true, documentType: true },
-  });
+      ...(authorization.isCorrection ? { correctionCount: sql`${cmDocuments.correctionCount} + 1` } : {}),
+    })
+    .where(eq(cmDocuments.id, document.id))
+    .returning();
+  const updated = { ...updatedDocument!, employee: document.employee, documentType };
 
   const { ipAddress, userAgent } = requestMetadata(request);
   await writeAuditLog({
@@ -98,10 +101,10 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: 
   const document = await getAccessibleDocument(user, id);
   if (!document) return Response.json({ error: "Not found" }, { status: 404 });
 
-  await prisma.cmDocument.update({
-    where: { id: document.id },
-    data: { isDeleted: true, deletedAt: new Date(), deletedById: user.id },
-  });
+  await db
+    .update(cmDocuments)
+    .set({ isDeleted: true, deletedAt: new Date(), deletedById: user.id })
+    .where(eq(cmDocuments.id, document.id));
 
   const { ipAddress, userAgent } = requestMetadata(request);
   await writeAuditLog({

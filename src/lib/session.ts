@@ -1,7 +1,7 @@
 import "server-only";
 import { auth } from "@/auth";
 import { permissionsForRole, type RolePermissions } from "@/lib/rbac";
-import type { UserRole } from "@/generated/prisma/enums";
+import type { UserRole } from "@/db/schema";
 
 export class UnauthenticatedError extends Error {
   constructor() {
