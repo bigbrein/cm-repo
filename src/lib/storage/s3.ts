@@ -2,12 +2,8 @@ import "server-only";
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import type { StorageAdapter } from "./types";
 
-// AWS S3 (or an S3-compatible endpoint, e.g. an Azure Blob S3 gateway /
-// MinIO) storage adapter — STORAGE_DRIVER=s3. Untested against a live
-// bucket in this MVP (no cloud credentials were available while building
-// it); the AWS SDK v3 calls below follow its documented API directly, but
-// validate bucket policy / IAM permissions before relying on this in
-// production.
+// AWS S3 (or an S3-compatible endpoint, e.g. Cloudflare R2, an Azure Blob
+// S3 gateway, or MinIO) storage adapter — STORAGE_DRIVER=s3.
 export class S3Storage implements StorageAdapter {
   private client: S3Client;
   private bucket: string;
@@ -28,13 +24,16 @@ export class S3Storage implements StorageAdapter {
   }
 
   async putObject(key: string, data: Buffer, contentType: string): Promise<void> {
+    // NFR-SEC-4: encrypt stored documents at rest. Not requested via an
+    // explicit SSE header here — R2's S3-compatible API rejects that
+    // parameter outright, and both R2 and AWS S3 (since 2023) encrypt
+    // objects at rest by default regardless.
     await this.client.send(
       new PutObjectCommand({
         Bucket: this.bucket,
         Key: key,
         Body: data,
         ContentType: contentType,
-        ServerSideEncryption: "AES256", // NFR-SEC-4: encrypt stored documents at rest
       })
     );
   }

@@ -134,11 +134,18 @@ comment at the top of each `lib/` file names the section and the specific
 
 ## Known limitations
 
-- **`SF_MODE=odata` and `STORAGE_DRIVER=s3` are unverified** against a
-  real SuccessFactors tenant / S3 bucket — neither was available while
-  building this. The code follows each provider's documented API/auth
-  conventions; validate field mappings and IAM/bucket policy before
-  relying on either in production.
+- **`SF_MODE=odata` is unverified** against a real SuccessFactors tenant —
+  none was available while building this. The code follows the OData
+  provider's documented API/auth conventions; validate field mappings
+  before relying on it in production.
+- **`STORAGE_DRIVER=s3` is verified against Cloudflare R2** (put/get/delete
+  round-tripped against a live bucket). Other S3-compatible providers
+  (AWS S3, MinIO, Azure's S3 gateway) should work the same way but haven't
+  been tested — validate bucket policy / IAM permissions before relying on
+  one in production. Note R2 specifically does not support the
+  `ServerSideEncryption` request parameter (unlike AWS S3), so
+  `lib/storage/s3.ts` relies on the provider's default at-rest encryption
+  instead of requesting it explicitly.
 - **Chunked upload staging (`lib/chunked-upload.ts`) is always local
   disk**, even when `STORAGE_DRIVER=s3`. Fine for a single instance; a
   multi-instance deployment needs sticky sessions during upload or a
