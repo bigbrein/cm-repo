@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { nanoid } from "nanoid";
-import { FileText, PenLine, Trash2, UploadCloud, Loader2 } from "lucide-react";
+import { FileText, PenLine, Trash2, UploadCloud, Loader2, CheckCircle2, MinusCircle, XCircle } from "lucide-react";
 import { EmployeePicker, type EmployeeOption, type EmployeeExtractionSuggestion } from "@/components/employee-picker";
 import { RichTextEditor } from "@/components/rich-text-editor";
 
@@ -18,6 +18,12 @@ interface BatchItem {
   bodyHtml: string;
   employee: EmployeeOption | null;
   employeeSuggestion?: EmployeeExtractionSuggestion | null;
+  // FR-UPL-5: extraction is best-effort and runs in the background per file —
+  // these track its progress/result so the user can see something is
+  // happening, and how much of it actually worked, rather than fields
+  // silently changing (or not) with no explanation.
+  extractionStatus?: "extracting" | "done";
+  extractionOutcome?: "full" | "partial" | "none";
   documentTypeId: string;
   validPeriodMonths: number;
   dateIssued: string; // datetime-local value
@@ -59,14 +65,36 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
       validPeriodMonths: DEFAULT_VALID_PERIOD_MONTHS,
       dateIssued: nowForDateTimeLocal(),
       status: "pending",
+      extractionStatus: "extracting",
     }));
     setItems((prev) => [...prev, ...newItems]);
 
     // FR-UPL-5: fire-and-forget metadata extraction per file — pre-populates
-    // the CM Type when a confident match is found, and (for PDFs) surfaces a
-    // non-blocking "add employee" suggestion when the document names someone
-    // who isn't in the system yet. Never auto-saves anything.
+    // the CM Type when a confident match is found, auto-selects the employee
+    // when the document names someone who already exists in the system, and
+    // otherwise surfaces a non-blocking "add employee" suggestion. Never
+    // auto-saves anything to the database on its own; extractionStatus/
+    // extractionOutcome exist purely to show the user what happened (or
+    // didn't) rather than fields silently changing with no explanation.
     for (const item of newItems) {
+      const finish = (outcome: "full" | "partial" | "none", patch: Partial<BatchItem> = {}) => {
+        setItems((prev) =>
+          prev.map((i) => {
+            if (i.clientId !== item.clientId) return i;
+            // Never clobber an employee the user already picked manually
+            // while extraction was still running in the background.
+            const { employee, employeeSuggestion, ...rest } = patch;
+            const employeePatch = i.employee
+              ? {}
+              : {
+                  ...(employee !== undefined ? { employee } : {}),
+                  ...(employeeSuggestion !== undefined ? { employeeSuggestion } : {}),
+                };
+            return { ...i, extractionStatus: "done", extractionOutcome: outcome, ...rest, ...employeePatch };
+          })
+        );
+      };
+
       const formData = new FormData();
       formData.set("file", item.file!);
       fetch("/api/uploads/extract-metadata", { method: "POST", body: formData })
@@ -75,40 +103,50 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
           const suggestion = data?.suggestion as
             | { documentTypeCode: string | null; employee: EmployeeExtractionSuggestion | null }
             | undefined;
-          if (!suggestion) return;
+          if (!suggestion) {
+            finish("none");
+            return;
+          }
 
+          let documentTypeId: string | null = null;
           if (suggestion.documentTypeCode) {
             const code = suggestion.documentTypeCode;
-            setItems((prev) =>
-              prev.map((i) => {
-                if (i.clientId !== item.clientId) return i;
-                const match = documentTypes.find((dt) => dt.name.toUpperCase().startsWith(code.slice(0, 4)));
-                return match ? { ...i, documentTypeId: match.id } : i;
-              })
-            );
+            documentTypeId = documentTypes.find((dt) => dt.name.toUpperCase().startsWith(code.slice(0, 4)))?.id ?? null;
           }
 
           const candidate = suggestion.employee;
-          if (!candidate || (!candidate.fullName && !candidate.employeeId)) return;
+          if (!candidate || (!candidate.fullName && !candidate.employeeId)) {
+            finish(documentTypeId ? "partial" : "none", documentTypeId ? { documentTypeId } : {});
+            return;
+          }
 
-          // Only offer to create a new employee if this one genuinely isn't
-          // in the system already — a real match should just show up in the
-          // normal type-ahead search instead.
+          // A real match auto-selects the employee (nothing is created —
+          // it's exactly the same as picking them from search). Otherwise
+          // this genuinely isn't in the system yet, which always leaves
+          // something for the user to do, however complete the extracted
+          // fields are.
           const q = candidate.employeeId ?? candidate.fullName!;
           const searchRes = await fetch(`/api/employees/search?q=${encodeURIComponent(q)}`).catch(() => null);
           const searchData = searchRes ? await searchRes.json().catch(() => null) : null;
-          const alreadyExists = ((searchData?.employees ?? []) as EmployeeOption[]).some(
+          const match = ((searchData?.employees ?? []) as EmployeeOption[]).find(
             (e) =>
               (candidate.employeeId && e.employeeId.toLowerCase() === candidate.employeeId.toLowerCase()) ||
               (candidate.fullName && e.fullName.toLowerCase() === candidate.fullName.toLowerCase())
           );
-          if (alreadyExists) return;
 
-          setItems((prev) =>
-            prev.map((i) => (i.clientId === item.clientId && !i.employee ? { ...i, employeeSuggestion: candidate } : i))
-          );
+          if (match) {
+            finish(documentTypeId ? "full" : "partial", {
+              ...(documentTypeId ? { documentTypeId } : {}),
+              employee: match,
+            });
+          } else {
+            finish("partial", {
+              ...(documentTypeId ? { documentTypeId } : {}),
+              employeeSuggestion: candidate,
+            });
+          }
         })
-        .catch(() => {});
+        .catch(() => finish("none"));
     }
   }
 
@@ -340,6 +378,7 @@ function BatchItemCard({
             <PenLine className="h-4 w-4 text-muted-foreground" />
           )}
           {item.mode === "file" ? item.file?.name : "Composed letter"}
+          {item.mode === "file" ? <ExtractionIndicator status={item.extractionStatus} outcome={item.extractionOutcome} /> : null}
           {item.status === "done" ? (
             <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
               Saved as {item.resultDocumentName}
@@ -419,5 +458,49 @@ function BatchItemCard({
         </div>
       ) : null}
     </div>
+  );
+}
+
+// FR-UPL-5: visible feedback for the background extraction pass — a spinner
+// while it's running, then a result indicator so the user knows how much
+// (if anything) actually got auto-filled, rather than fields silently
+// changing (or not) with no explanation.
+function ExtractionIndicator({
+  status,
+  outcome,
+}: {
+  status?: "extracting" | "done";
+  outcome?: "full" | "partial" | "none";
+}) {
+  if (status === "extracting") {
+    return (
+      <Loader2
+        className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground"
+        aria-label="Extracting details from document..."
+      >
+        <title>Extracting details from document...</title>
+      </Loader2>
+    );
+  }
+  if (status !== "done" || !outcome) return null;
+
+  if (outcome === "full") {
+    return (
+      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-label="Auto-filled from document">
+        <title>Auto-filled from document — employee and CM type detected</title>
+      </CheckCircle2>
+    );
+  }
+  if (outcome === "partial") {
+    return (
+      <MinusCircle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" aria-label="Partially auto-filled">
+        <title>Partially auto-filled — some details couldn't be extracted, or the employee isn't in the system yet</title>
+      </MinusCircle>
+    );
+  }
+  return (
+    <XCircle className="h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400" aria-label="Nothing auto-filled">
+      <title>Couldn't auto-fill anything from this document — fill in the details below</title>
+    </XCircle>
   );
 }
