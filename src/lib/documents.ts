@@ -16,7 +16,7 @@ export interface CreateCmDocumentInput {
   validPeriodMonths: number;
   dateIssued: Date;
   uploadSessionId?: string | null;
-  file?: { buffer: Buffer; fileName: string; mimeType: string } | null;
+  file?: { load: () => Promise<Buffer>; fileName: string; mimeType: string } | null;
   bodyHtml?: string | null;
 }
 
@@ -56,11 +56,16 @@ export async function createCmDocument(user: CurrentUser, input: CreateCmDocumen
 
   const expiryDate = computeExpiryDate(input.dateIssued, input.validPeriodMonths); // BR-2
 
+  // Reads the file into memory only after every validation check above has
+  // passed (fail fast on a bad request rather than buffering for nothing),
+  // and only right before it's needed for storage.
   let fileKey: string | null = null;
+  let fileBuffer: Buffer | null = null;
   if (input.file) {
+    fileBuffer = await input.file.load();
     const storage = getStorageAdapter();
     fileKey = `cm-documents/${employee.employeeId}/${nanoid(12)}-${sanitizeFileName(input.file.fileName)}`;
-    await storage.putObject(fileKey, input.file.buffer, input.file.mimeType);
+    await storage.putObject(fileKey, fileBuffer, input.file.mimeType);
   }
 
   const document = await db.transaction(async (tx) => {
@@ -83,7 +88,7 @@ export async function createCmDocument(user: CurrentUser, input: CreateCmDocumen
         fileKey,
         fileName: input.file?.fileName ?? null,
         fileMimeType: input.file?.mimeType ?? null,
-        fileSizeBytes: input.file?.buffer.byteLength ?? null,
+        fileSizeBytes: fileBuffer?.byteLength ?? null,
         bodyHtml: input.bodyHtml ?? null,
         uploadSessionId: input.uploadSessionId ?? null,
         uploadedById: user.id,

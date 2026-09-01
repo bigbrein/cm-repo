@@ -73,6 +73,10 @@ export async function withApiAuth<T>(
     if (error instanceof ForbiddenError) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
-    throw error;
+    // Anything else (e.g. a transient DB connection drop) would otherwise
+    // crash the response mid-stream, leaving the client with an empty body
+    // it can't call .json() on. Always hand back valid JSON instead.
+    console.error("Unhandled route error:", error);
+    return Response.json({ error: "Internal server error" }, { status: 500 });
   }
 }

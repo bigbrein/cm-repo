@@ -27,16 +27,14 @@ export async function POST(request: NextRequest) {
         return Response.json({ error: "Missing or invalid required fields" }, { status: 400 });
       }
 
-      let file: { buffer: Buffer; fileName: string; mimeType: string } | null = null;
+      let file: { load: () => Promise<Buffer>; fileName: string; mimeType: string } | null = null;
       if (tempUploadId) {
-        const buffer = await finalizeChunkedUpload(tempUploadId);
         const fileName = String(formData.get("fileName") ?? "upload.bin");
         const mimeType = String(formData.get("fileMimeType") ?? "application/octet-stream");
-        file = { buffer, fileName, mimeType };
+        file = { load: () => finalizeChunkedUpload(tempUploadId), fileName, mimeType };
       } else if (filePart instanceof Blob && filePart.size > 0) {
-        const buffer = Buffer.from(await filePart.arrayBuffer());
         file = {
-          buffer,
+          load: () => filePart.arrayBuffer().then(Buffer.from),
           fileName: (filePart as File).name ?? "upload.bin",
           mimeType: filePart.type || "application/octet-stream",
         };
