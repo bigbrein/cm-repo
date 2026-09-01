@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { nanoid } from "nanoid";
 import { FileText, PenLine, Trash2, UploadCloud, Loader2 } from "lucide-react";
-import { EmployeePicker, type EmployeeOption } from "@/components/employee-picker";
+import { EmployeePicker, type EmployeeOption, type EmployeeExtractionSuggestion } from "@/components/employee-picker";
 import { RichTextEditor } from "@/components/rich-text-editor";
 
 interface DocumentTypeOption {
@@ -17,6 +17,7 @@ interface BatchItem {
   file?: File;
   bodyHtml: string;
   employee: EmployeeOption | null;
+  employeeSuggestion?: EmployeeExtractionSuggestion | null;
   documentTypeId: string;
   validPeriodMonths: number;
   dateIssued: string; // datetime-local value
@@ -61,24 +62,50 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
     }));
     setItems((prev) => [...prev, ...newItems]);
 
-    // FR-UPL-5: fire-and-forget metadata extraction per file, pre-populating
-    // the CM Type when a confident match is found. Never auto-saves.
+    // FR-UPL-5: fire-and-forget metadata extraction per file — pre-populates
+    // the CM Type when a confident match is found, and (for PDFs) surfaces a
+    // non-blocking "add employee" suggestion when the document names someone
+    // who isn't in the system yet. Never auto-saves anything.
     for (const item of newItems) {
-      fetch("/api/uploads/extract-metadata", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fileName: item.file!.name }),
-      })
+      const formData = new FormData();
+      formData.set("file", item.file!);
+      fetch("/api/uploads/extract-metadata", { method: "POST", body: formData })
         .then((r) => r.json())
-        .then((data) => {
-          const code = data?.suggestion?.documentTypeCode as string | null | undefined;
-          if (!code) return;
+        .then(async (data) => {
+          const suggestion = data?.suggestion as
+            | { documentTypeCode: string | null; employee: EmployeeExtractionSuggestion | null }
+            | undefined;
+          if (!suggestion) return;
+
+          if (suggestion.documentTypeCode) {
+            const code = suggestion.documentTypeCode;
+            setItems((prev) =>
+              prev.map((i) => {
+                if (i.clientId !== item.clientId) return i;
+                const match = documentTypes.find((dt) => dt.name.toUpperCase().startsWith(code.slice(0, 4)));
+                return match ? { ...i, documentTypeId: match.id } : i;
+              })
+            );
+          }
+
+          const candidate = suggestion.employee;
+          if (!candidate || (!candidate.fullName && !candidate.employeeId)) return;
+
+          // Only offer to create a new employee if this one genuinely isn't
+          // in the system already — a real match should just show up in the
+          // normal type-ahead search instead.
+          const q = candidate.employeeId ?? candidate.fullName!;
+          const searchRes = await fetch(`/api/employees/search?q=${encodeURIComponent(q)}`).catch(() => null);
+          const searchData = searchRes ? await searchRes.json().catch(() => null) : null;
+          const alreadyExists = ((searchData?.employees ?? []) as EmployeeOption[]).some(
+            (e) =>
+              (candidate.employeeId && e.employeeId.toLowerCase() === candidate.employeeId.toLowerCase()) ||
+              (candidate.fullName && e.fullName.toLowerCase() === candidate.fullName.toLowerCase())
+          );
+          if (alreadyExists) return;
+
           setItems((prev) =>
-            prev.map((i) => {
-              if (i.clientId !== item.clientId) return i;
-              const match = documentTypes.find((dt) => dt.name.toUpperCase().startsWith(code.slice(0, 4)));
-              return match ? { ...i, documentTypeId: match.id } : i;
-            })
+            prev.map((i) => (i.clientId === item.clientId && !i.employee ? { ...i, employeeSuggestion: candidate } : i))
           );
         })
         .catch(() => {});
@@ -340,7 +367,11 @@ function BatchItemCard({
         <div>
           <label className="block text-xs font-medium text-muted-foreground">Employee</label>
           <div className="mt-1">
-            <EmployeePicker value={item.employee} onChange={(employee) => onChange({ employee })} />
+            <EmployeePicker
+              value={item.employee}
+              onChange={(employee) => onChange({ employee })}
+              suggestion={item.employeeSuggestion}
+            />
           </div>
         </div>
         <div>

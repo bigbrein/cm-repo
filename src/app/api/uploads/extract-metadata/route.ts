@@ -1,17 +1,60 @@
 import type { NextRequest } from "next/server";
+import { extractText, getDocumentProxy } from "unpdf";
 import { withApiAuth } from "@/lib/session";
-import { suggestMetadataFromFileName } from "@/lib/metadata-extraction";
+import {
+  suggestMetadataFromFileName,
+  detectDocumentTypeCode,
+  extractEmployeeCandidateFromText,
+  type ExtractedEmployeeCandidate,
+} from "@/lib/metadata-extraction";
 
-// FR-UPL-5: async metadata extraction — modeled as a server round-trip
-// (even though today's heuristic only needs the filename) so a future
-// real content-based extractor (PDF/DOCX text parsing) is a drop-in
-// change behind this same endpoint. Suggestions only; nothing is saved.
+// FR-UPL-5: async metadata extraction, pre-populating the form without
+// persisting anything (FR-UPL-7 still requires explicit user confirmation).
+// Two signals: the filename (always) and, for PDFs under the size cap, the
+// document's own text — scanned for "Label: value" lines. CM templates
+// vary a lot between organizations, so content extraction is best-effort:
+// a narrative-only letter with no label:value layout just yields nulls,
+// and the client only ever treats these as an editable suggestion.
+const MAX_CONTENT_EXTRACTION_BYTES = 15 * 1024 * 1024;
+
 export async function POST(request: NextRequest) {
   return withApiAuth(
     async () => {
-      const { fileName } = (await request.json().catch(() => ({}))) as { fileName?: string };
+      const formData = await request.formData();
+      const filePart = formData.get("file");
+      const fileName =
+        (filePart instanceof Blob ? (filePart as File).name : null) ?? String(formData.get("fileName") ?? "");
       if (!fileName) return Response.json({ error: "fileName is required" }, { status: 400 });
-      return Response.json({ suggestion: suggestMetadataFromFileName(fileName) });
+
+      const nameHeuristic = suggestMetadataFromFileName(fileName);
+      let documentTypeCode = nameHeuristic.documentTypeCode;
+      let employee: ExtractedEmployeeCandidate | null = null;
+
+      const isPdf = filePart instanceof Blob && (filePart.type === "application/pdf" || /\.pdf$/i.test(fileName));
+      if (filePart instanceof Blob && isPdf && filePart.size > 0 && filePart.size <= MAX_CONTENT_EXTRACTION_BYTES) {
+        try {
+          const bytes = new Uint8Array(await filePart.arrayBuffer());
+          const pdf = await getDocumentProxy(bytes);
+          const { text } = await extractText(pdf, { mergePages: true });
+          documentTypeCode = detectDocumentTypeCode(text) ?? documentTypeCode;
+          const candidate = extractEmployeeCandidateFromText(text);
+          if (candidate.fullName || candidate.employeeId) {
+            employee = candidate;
+          }
+        } catch (error) {
+          // Malformed/unreadable/scanned-image PDF — fall back to the
+          // filename-only suggestion rather than failing the request.
+          console.error("PDF metadata extraction failed:", error);
+        }
+      }
+
+      return Response.json({
+        suggestion: {
+          documentTypeCode,
+          employeeIdHint: nameHeuristic.employeeIdHint,
+          employee,
+        },
+      });
     },
     { permission: "canUploadDocuments" }
   );

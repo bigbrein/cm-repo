@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Search, UserPlus, X, Loader2 } from "lucide-react";
+import { Search, UserPlus, X, Loader2, Sparkles } from "lucide-react";
 
 export interface EmployeeOption {
   id: string;
@@ -11,9 +11,25 @@ export interface EmployeeOption {
   department: { id: string; name: string; code: string };
 }
 
+// FR-UPL-5: candidate employee identity detected from the uploaded CM's own
+// text (see lib/metadata-extraction.ts) when it doesn't match anyone
+// already in the system. Every field is a best-effort suggestion only.
+export interface EmployeeExtractionSuggestion {
+  fullName: string | null;
+  employeeId: string | null;
+  department: string | null;
+  jobTitle: string | null;
+}
+
 interface DepartmentOption {
   id: string;
   name: string;
+}
+
+function splitFullName(fullName: string): { firstName: string; lastName: string } {
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length === 1) return { firstName: parts[0]!, lastName: "" };
+  return { firstName: parts.slice(0, -1).join(" "), lastName: parts.at(-1)! };
 }
 
 // 3.2 SAP SuccessFactors Integration — FR-SF-1/2/6/7: employee lookup with
@@ -22,9 +38,11 @@ interface DepartmentOption {
 export function EmployeePicker({
   value,
   onChange,
+  suggestion,
 }: {
   value: EmployeeOption | null;
   onChange: (employee: EmployeeOption | null) => void;
+  suggestion?: EmployeeExtractionSuggestion | null;
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -65,6 +83,7 @@ export function EmployeePicker({
   }, []);
 
   const listToShow = query.trim() ? results : recent.length > 0 ? recent : results;
+  const hasSuggestion = Boolean(suggestion && (suggestion.fullName || suggestion.employeeId));
 
   if (value) {
     return (
@@ -151,8 +170,30 @@ export function EmployeePicker({
         </div>
       ) : null}
 
+      {/* FR-UPL-5: non-blocking suggestion — deliberately not a dialog, so it
+          can't collide with dialogs from other items in the same batch.
+          Only opens the (existing) manual-entry dialog on explicit click. */}
+      {hasSuggestion && !open ? (
+        <button
+          type="button"
+          onClick={() => setShowManualEntry(true)}
+          className="mt-1.5 flex w-full items-center gap-2 rounded-md border border-primary/25 bg-primary/5 px-2.5 py-1.5 text-left text-xs hover:bg-primary/10"
+        >
+          <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+          <span className="min-w-0 flex-1 truncate text-muted-foreground">
+            Detected from document:{" "}
+            <span className="font-medium text-foreground">
+              {[suggestion!.fullName, suggestion!.employeeId].filter(Boolean).join(" · ")}
+            </span>
+            {" — not in the system"}
+          </span>
+          <span className="shrink-0 font-medium text-primary">Add employee</span>
+        </button>
+      ) : null}
+
       {showManualEntry ? (
         <ManualEntryModal
+          initial={hasSuggestion ? suggestion! : undefined}
           onClose={() => setShowManualEntry(false)}
           onCreated={(employee) => {
             onChange(employee);
@@ -165,22 +206,43 @@ export function EmployeePicker({
 }
 
 function ManualEntryModal({
+  initial,
   onClose,
   onCreated,
 }: {
+  initial?: EmployeeExtractionSuggestion;
   onClose: () => void;
   onCreated: (employee: EmployeeOption) => void;
 }) {
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
+  const [departmentId, setDepartmentId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     fetch("/api/departments")
       .then((r) => r.json())
-      .then((data) => setDepartments(data.departments ?? []))
+      .then((data: { departments?: DepartmentOption[] }) => {
+        const list = data.departments ?? [];
+        setDepartments(list);
+        // Best-effort match against the extracted department name — the
+        // CM's own wording rarely matches a lookup value exactly, so this
+        // is only ever a convenience; the user can still change it.
+        if (initial?.department) {
+          const needle = initial.department.trim().toLowerCase();
+          const match = list.find(
+            (d) => d.name.toLowerCase() === needle || d.name.toLowerCase().includes(needle) || needle.includes(d.name.toLowerCase())
+          );
+          if (match) setDepartmentId(match.id);
+        }
+      })
       .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const { firstName: initialFirstName, lastName: initialLastName } = initial?.fullName
+    ? splitFullName(initial.fullName)
+    : { firstName: "", lastName: "" };
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -229,7 +291,9 @@ function ManualEntryModal({
           </button>
         </div>
         <p className="mb-3 text-xs text-muted-foreground">
-          Use this only when the employee can&apos;t be located via SuccessFactors search (FR-SF-7).
+          {initial
+            ? "Fields below were pre-filled from the uploaded document — check them and edit anything that's wrong before adding."
+            : "Use this only when the employee can't be located via SuccessFactors search (FR-SF-7)."}
         </p>
         {error ? (
           <div className="mb-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-800 dark:bg-red-950 dark:text-red-200">
@@ -243,6 +307,7 @@ function ManualEntryModal({
               <input
                 name="firstName"
                 required
+                defaultValue={initialFirstName}
                 className="mt-1 w-full rounded-md border border-border px-2.5 py-1.5 text-sm bg-surface"
               />
             </div>
@@ -251,6 +316,7 @@ function ManualEntryModal({
               <input
                 name="lastName"
                 required
+                defaultValue={initialLastName}
                 className="mt-1 w-full rounded-md border border-border px-2.5 py-1.5 text-sm bg-surface"
               />
             </div>
@@ -260,6 +326,7 @@ function ManualEntryModal({
             <input
               name="employeeId"
               required
+              defaultValue={initial?.employeeId ?? ""}
               className="mt-1 w-full rounded-md border border-border px-2.5 py-1.5 text-sm bg-surface"
             />
           </div>
@@ -268,6 +335,8 @@ function ManualEntryModal({
             <select
               name="departmentId"
               required
+              value={departmentId}
+              onChange={(e) => setDepartmentId(e.target.value)}
               className="mt-1 w-full rounded-md border border-border px-2.5 py-1.5 text-sm bg-surface"
             >
               <option value="">Select a department</option>
@@ -282,6 +351,7 @@ function ManualEntryModal({
             <label className="block text-xs font-medium text-muted-foreground">Job title (optional)</label>
             <input
               name="jobTitle"
+              defaultValue={initial?.jobTitle ?? ""}
               className="mt-1 w-full rounded-md border border-border px-2.5 py-1.5 text-sm bg-surface"
             />
           </div>
