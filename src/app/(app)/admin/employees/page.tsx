@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { employees as employeesTable, departments, auditLogs } from "@/db/schema";
 import { getCurrentUser } from "@/lib/session";
 import { AccessDenied } from "@/components/access-denied";
+import { SubmitButton } from "@/components/submit-button";
 import { triggerSyncAction } from "./actions";
 
 const STATUS_STYLES: Record<string, string> = {
@@ -68,12 +69,12 @@ export default async function AdminEmployeesPage() {
           </p>
         </div>
         <form action={triggerSyncAction}>
-          <button
-            type="submit"
+          <SubmitButton
+            pendingText="Syncing..."
             className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary-hover"
           >
             Sync now
-          </button>
+          </SubmitButton>
         </form>
       </div>
 

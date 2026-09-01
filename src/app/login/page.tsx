@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { credentialsLoginAction, microsoftLoginAction } from "./actions";
+import { SubmitButton } from "@/components/submit-button";
 
 const ERROR_MESSAGES: Record<string, string> = {
   SessionExpired: "Your session expired after a period of inactivity. Please sign in again.",
@@ -59,12 +60,9 @@ export default async function LoginPage({
 
           {ENTRA_ID_ENABLED ? (
             <form action={microsoftLoginAction} className="mb-4">
-              <button
-                type="submit"
-                className="flex w-full items-center justify-center gap-2 rounded-md border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground shadow-sm hover:bg-surface-muted"
-              >
+              <SubmitButton className="flex w-full items-center justify-center gap-2 rounded-md border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground shadow-sm hover:bg-surface-muted">
                 Sign in with Microsoft
-              </button>
+              </SubmitButton>
             </form>
           ) : null}
 
@@ -107,12 +105,9 @@ export default async function LoginPage({
                   placeholder="••••••••"
                 />
               </div>
-              <button
-                type="submit"
-                className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary-hover"
-              >
+              <SubmitButton className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary-hover">
                 Sign in
-              </button>
+              </SubmitButton>
             </form>
           ) : null}
 

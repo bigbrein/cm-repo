@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { nanoid } from "nanoid";
-import { FileText, PenLine, Trash2, UploadCloud } from "lucide-react";
+import { FileText, PenLine, Trash2, UploadCloud, Loader2 } from "lucide-react";
 import { EmployeePicker, type EmployeeOption } from "@/components/employee-picker";
 import { RichTextEditor } from "@/components/rich-text-editor";
 
@@ -256,9 +256,16 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
               type="button"
               disabled={submitting}
               onClick={submitBatch}
-              className="rounded-md bg-primary px-5 py-2 text-sm font-medium text-primary-foreground hover:bg-primary-hover disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-5 py-2 text-sm font-medium text-primary-foreground hover:bg-primary-hover disabled:opacity-50"
             >
-              {submitting ? "Uploading..." : `Upload ${items.length} document${items.length === 1 ? "" : "s"}`}
+              {submitting ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                  Uploading...
+                </>
+              ) : (
+                `Upload ${items.length} document${items.length === 1 ? "" : "s"}`
+              )}
             </button>
           </div>
 

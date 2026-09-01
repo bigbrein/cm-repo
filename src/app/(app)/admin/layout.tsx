@@ -1,6 +1,6 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/session";
+import { AdminTabs } from "./admin-tabs";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
@@ -25,19 +25,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   return (
     <div>
       <h1 className="text-xl font-semibold">Admin</h1>
-      <nav className="mt-3 flex gap-1 border-b border-border">
-        {tabs
-          .filter((t) => t.show)
-          .map((t) => (
-            <Link
-              key={t.href}
-              href={t.href}
-              className="rounded-t-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-surface-muted"
-            >
-              {t.label}
-            </Link>
-          ))}
-      </nav>
+      <AdminTabs tabs={tabs.filter((t) => t.show)} />
       <div className="mt-4">{children}</div>
     </div>
   );

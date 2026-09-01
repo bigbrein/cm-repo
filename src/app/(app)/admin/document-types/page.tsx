@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { documentTypes as documentTypesTable } from "@/db/schema";
 import { getCurrentUser } from "@/lib/session";
 import { AccessDenied } from "@/components/access-denied";
+import { SubmitButton } from "@/components/submit-button";
 import { createDocumentTypeAction, toggleDocumentTypeAction } from "./actions";
 
 export default async function AdminDocumentTypesPage() {
@@ -45,12 +46,9 @@ export default async function AdminDocumentTypesPage() {
                   <form action={toggleDocumentTypeAction}>
                     <input type="hidden" name="id" value={dt.id} />
                     <input type="hidden" name="isActive" value={dt.isActive ? "false" : "true"} />
-                    <button
-                      type="submit"
-                      className="rounded-md border border-border px-3 py-1 text-xs font-medium hover:bg-surface-muted"
-                    >
+                    <SubmitButton className="rounded-md border border-border px-3 py-1 text-xs font-medium hover:bg-surface-muted">
                       {dt.isActive ? "Deactivate" : "Activate"}
-                    </button>
+                    </SubmitButton>
                   </form>
                 </td>
               </tr>
@@ -88,12 +86,12 @@ export default async function AdminDocumentTypesPage() {
               className="mt-1 rounded-md border border-border px-3 py-1.5 text-sm uppercase bg-surface"
             />
           </div>
-          <button
-            type="submit"
+          <SubmitButton
+            pendingText="Adding..."
             className="rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary-hover"
           >
             Add
-          </button>
+          </SubmitButton>
         </form>
       </div>
     </div>

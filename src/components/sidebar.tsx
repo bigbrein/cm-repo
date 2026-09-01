@@ -8,6 +8,7 @@ import { ROLE_LABELS } from "@/lib/rbac";
 import type { CurrentUser } from "@/lib/session";
 import { signOutAction } from "@/app/(app)/actions";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { SubmitButton } from "@/components/submit-button";
 
 const ICONS = {
   "/dashboard": LayoutDashboard,
@@ -63,12 +64,12 @@ function SidebarFooter({ user }: { user: CurrentUser }) {
         <ThemeToggle />
       </div>
       <form action={signOutAction} className="mt-3">
-        <button
-          type="submit"
+        <SubmitButton
+          pendingText="Signing out..."
           className="w-full rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-surface-muted hover:text-foreground"
         >
           Sign out
-        </button>
+        </SubmitButton>
       </form>
     </div>
   );

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Search, UserPlus, X } from "lucide-react";
+import { Search, UserPlus, X, Loader2 } from "lucide-react";
 
 export interface EmployeeOption {
   id: string;
@@ -304,9 +304,16 @@ function ManualEntryModal({
             <button
               type="submit"
               disabled={submitting}
-              className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary-hover disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary-hover disabled:opacity-50"
             >
-              {submitting ? "Adding..." : "Add employee"}
+              {submitting ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                  Adding...
+                </>
+              ) : (
+                "Add employee"
+              )}
             </button>
           </div>
         </form>

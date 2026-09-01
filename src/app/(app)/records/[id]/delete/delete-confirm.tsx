@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Loader2 } from "lucide-react";
 
 export function DeleteConfirm({ documentId, documentName }: { documentId: string; documentName: string }) {
   const router = useRouter();
@@ -42,9 +43,16 @@ export function DeleteConfirm({ documentId, documentName }: { documentId: string
           type="button"
           disabled={submitting}
           onClick={handleDelete}
-          className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-red-700 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-red-700 disabled:opacity-50"
         >
-          {submitting ? "Deleting..." : "Delete record"}
+          {submitting ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              Deleting...
+            </>
+          ) : (
+            "Delete record"
+          )}
         </button>
         <button
           type="button"
