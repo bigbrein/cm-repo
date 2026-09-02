@@ -2,7 +2,17 @@
 
 import { useRef, useState } from "react";
 import { nanoid } from "nanoid";
-import { FileText, PenLine, Trash2, UploadCloud, Loader2, CheckCircle2, MinusCircle, XCircle, Check } from "lucide-react";
+import {
+  FileText,
+  PenLine,
+  Trash2,
+  UploadCloud,
+  Loader2,
+  CheckCircle2,
+  MinusCircle,
+  XCircle,
+  Check,
+} from "lucide-react";
 import { EmployeePicker, type EmployeeOption, type EmployeeExtractionSuggestion } from "@/components/employee-picker";
 import { RichTextEditor } from "@/components/rich-text-editor";
 import { useUploadBatch, type BatchItem } from "@/components/upload-batch-context";
@@ -78,8 +88,7 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
         .then((r) => r.json())
         .then(async (data) => {
           const suggestion = data?.suggestion as
-            | { documentTypeCode: string | null; employee: EmployeeExtractionSuggestion | null }
-            | undefined;
+            { documentTypeCode: string | null; employee: EmployeeExtractionSuggestion | null } | undefined;
           if (!suggestion) {
             finish("none");
             return;
@@ -273,17 +282,6 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
 
       {items.length > 0 ? (
         <div className="space-y-4">
-          {items.map((item, index) => (
-            <BatchItemCard
-              key={item.clientId}
-              index={index}
-              item={item}
-              documentTypes={documentTypes}
-              onChange={(patch) => updateItem(item.clientId, patch)}
-              onRemove={() => removeItem(item.clientId)}
-            />
-          ))}
-
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <button
@@ -318,6 +316,17 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
               )}
             </button>
           </div>
+
+          {items.map((item, index) => (
+            <BatchItemCard
+              key={item.clientId}
+              index={index}
+              item={item}
+              documentTypes={documentTypes}
+              onChange={(patch) => updateItem(item.clientId, patch)}
+              onRemove={() => removeItem(item.clientId)}
+            />
+          ))}
 
           {submitSummary ? (
             <div
@@ -488,21 +497,29 @@ function ExtractionIndicator({ item }: { item: BatchItem }) {
 
   if (item.extractionOutcome === "full") {
     return (
-      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-label="Auto-filled from document">
+      <CheckCircle2
+        className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400"
+        aria-label="Auto-filled from document"
+      >
         <title>Auto-filled from document — employee and CM type detected</title>
       </CheckCircle2>
     );
   }
   if (item.extractionOutcome === "partial") {
     return (
-      <MinusCircle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" aria-label="Partially auto-filled">
-        <title>Partially auto-filled — some details couldn't be extracted, or the employee isn't in the system yet</title>
+      <MinusCircle
+        className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400"
+        aria-label="Partially auto-filled"
+      >
+        <title>
+          Partially auto-filled — some details couldn&apos;t be extracted, or the employee isn&apos;t in the system yet
+        </title>
       </MinusCircle>
     );
   }
   return (
     <XCircle className="h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400" aria-label="Nothing auto-filled">
-      <title>Couldn't auto-fill anything from this document — fill in the details below</title>
+      <title>Couldn&apos;t auto-fill anything from this document — fill in the details below</title>
     </XCircle>
   );
 }
