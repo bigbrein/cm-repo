@@ -170,13 +170,12 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
     return uploadId;
   }
 
-  async function submitBatch() {
-    const invalid = items.find((i) => !i.employee || !i.documentTypeId || !i.validPeriodMonths || !i.dateIssued);
-    if (invalid) {
-      updateItem(invalid.clientId, { status: "error", errorMessage: "Please complete all required fields." });
-      return;
-    }
-    if (items.length === 0) return;
+  // Shared submit core — used by the "upload all", "upload ready", and
+  // per-item upload actions alike, so they all share the same session
+  // grouping and status-tracking behavior. Doesn't validate completeness
+  // itself; callers decide which items are eligible.
+  async function submitItems(targetItems: BatchItem[]) {
+    if (targetItems.length === 0) return;
 
     setSubmitting(true);
     setSubmitSummary(null);
@@ -189,7 +188,7 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
     let failed = 0;
 
     // FR-UPL-6: process and submit items in upload order.
-    for (const item of items) {
+    for (const item of targetItems) {
       updateItem(item.clientId, { status: "uploading" });
       try {
         const formData = new FormData();
@@ -230,6 +229,24 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
     setSubmitSummary({ succeeded, failed });
     setSubmitting(false);
   }
+
+  async function submitBatch() {
+    const invalid = items.find((i) => !i.employee || !i.documentTypeId || !i.validPeriodMonths || !i.dateIssued);
+    if (invalid) {
+      updateItem(invalid.clientId, { status: "error", errorMessage: "Please complete all required fields." });
+      return;
+    }
+    await submitItems(items);
+  }
+
+  // Submits only the items that are already fully filled in, leaving
+  // anything still incomplete untouched in the queue — lets a reviewer push
+  // finished CMs through without waiting on the rest of the batch.
+  async function submitReadyItems() {
+    await submitItems(items.filter(isReadyToSubmit));
+  }
+
+  const readyCount = items.filter(isReadyToSubmit).length;
 
   return (
     <div className="space-y-6">
@@ -300,21 +317,37 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
                 Clear all
               </button>
             </div>
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={submitBatch}
-              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-5 py-2 text-sm font-medium text-primary-foreground hover:bg-primary-hover disabled:opacity-50"
-            >
-              {submitting ? (
-                <>
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                  Uploading...
-                </>
-              ) : (
-                `Upload ${items.length} document${items.length === 1 ? "" : "s"}`
-              )}
-            </button>
+
+            {/* On the right, away from "Clear all" on the left — the
+                per-item remove button (far below, at the bottom of each
+                card) is the one kept clear of upload actions. */}
+            <div className="flex items-center gap-2">
+              {readyCount > 0 && readyCount < items.length ? (
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={submitReadyItems}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-surface-muted disabled:opacity-50"
+                >
+                  Upload {readyCount} ready document{readyCount === 1 ? "" : "s"}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={submitBatch}
+                className="inline-flex items-center gap-1.5 rounded-md bg-primary px-5 py-2 text-sm font-medium text-primary-foreground hover:bg-primary-hover disabled:opacity-50"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                    Uploading...
+                  </>
+                ) : (
+                  `Upload ${items.length} document${items.length === 1 ? "" : "s"}`
+                )}
+              </button>
+            </div>
           </div>
 
           {items.map((item, index) => (
@@ -323,8 +356,10 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
               index={index}
               item={item}
               documentTypes={documentTypes}
+              submitting={submitting}
               onChange={(patch) => updateItem(item.clientId, patch)}
               onRemove={() => removeItem(item.clientId)}
+              onUpload={() => submitItems([item])}
             />
           ))}
 
@@ -350,14 +385,18 @@ function BatchItemCard({
   index,
   item,
   documentTypes,
+  submitting,
   onChange,
   onRemove,
+  onUpload,
 }: {
   index: number;
   item: BatchItem;
   documentTypes: DocumentTypeOption[];
+  submitting: boolean;
   onChange: (patch: Partial<BatchItem>) => void;
   onRemove: () => void;
+  onUpload: () => void;
 }) {
   return (
     <div className="rounded-lg border border-border bg-surface p-4">
@@ -451,6 +490,27 @@ function BatchItemCard({
           </div>
         </div>
       ) : null}
+
+      {/* Deliberately far from the remove button above — a single click
+          here should only ever upload this item, never risk landing on
+          delete. */}
+      {item.status !== "done" ? (
+        <div className="mt-3 flex justify-end border-t border-border pt-3">
+          <button
+            type="button"
+            disabled={submitting || !isReadyToSubmit(item)}
+            onClick={onUpload}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-surface-muted disabled:opacity-50"
+          >
+            {item.status === "uploading" ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <UploadCloud className="h-3.5 w-3.5" aria-hidden />
+            )}
+            {item.status === "uploading" ? "Uploading..." : item.status === "error" ? "Retry upload" : "Upload this document"}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -460,6 +520,12 @@ function BatchItemCard({
 // the item is ready to submit.
 function isItemComplete(item: BatchItem): boolean {
   return Boolean(item.employee && item.documentTypeId && item.validPeriodMonths && item.dateIssued);
+}
+
+// Complete, and not already mid-upload or already saved — what "Upload
+// ready documents" and each item's own upload button actually submit.
+function isReadyToSubmit(item: BatchItem): boolean {
+  return isItemComplete(item) && item.status !== "done" && item.status !== "uploading";
 }
 
 // FR-UPL-5: visible feedback for the background extraction pass — a spinner
