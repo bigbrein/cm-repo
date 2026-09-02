@@ -215,9 +215,18 @@ function ManualEntryModal({
   onCreated: (employee: EmployeeOption) => void;
 }) {
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
+  const [departmentsLoaded, setDepartmentsLoaded] = useState(false);
   const [departmentId, setDepartmentId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // FR-SF-7-style fallback for departments: when the CM names a department
+  // that isn't in the lookup list yet, offer to add it inline rather than
+  // leaving the user stuck with an empty select.
+  const [showAddDepartment, setShowAddDepartment] = useState(false);
+  const [newDeptName, setNewDeptName] = useState("");
+  const [deptSubmitting, setDeptSubmitting] = useState(false);
+  const [deptError, setDeptError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/departments")
@@ -236,9 +245,37 @@ function ManualEntryModal({
           if (match) setDepartmentId(match.id);
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setDepartmentsLoaded(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function handleCreateDepartment() {
+    const name = newDeptName.trim();
+    if (!name) return;
+    setDeptSubmitting(true);
+    setDeptError(null);
+    try {
+      const res = await fetch("/api/departments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setDeptError(data.error ?? "Failed to create department");
+        return;
+      }
+      setDepartments((prev) => [...prev, data.department].sort((a, b) => a.name.localeCompare(b.name)));
+      setDepartmentId(data.department.id);
+      setShowAddDepartment(false);
+    } finally {
+      setDeptSubmitting(false);
+    }
+  }
+
+  const departmentSuggestionAvailable =
+    departmentsLoaded && Boolean(initial?.department) && !departmentId && !showAddDepartment;
 
   const { firstName: initialFirstName, lastName: initialLastName } = initial?.fullName
     ? splitFullName(initial.fullName)
@@ -346,6 +383,56 @@ function ManualEntryModal({
                 </option>
               ))}
             </select>
+
+            {departmentSuggestionAvailable ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setNewDeptName(initial!.department!);
+                  setShowAddDepartment(true);
+                }}
+                className="mt-1.5 flex w-full items-center gap-2 rounded-md border border-primary/25 bg-primary/5 px-2.5 py-1.5 text-left text-xs hover:bg-primary/10"
+              >
+                <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+                <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                  Detected department: <span className="font-medium text-foreground">{initial!.department}</span>
+                  {" — not in the system"}
+                </span>
+                <span className="shrink-0 font-medium text-primary">Add department</span>
+              </button>
+            ) : null}
+
+            {showAddDepartment ? (
+              <div className="mt-1.5 space-y-1.5 rounded-md border border-border bg-surface-muted p-2">
+                <div className="flex items-center gap-1.5">
+                  <input
+                    value={newDeptName}
+                    onChange={(e) => setNewDeptName(e.target.value)}
+                    placeholder="Department name"
+                    className="min-w-0 flex-1 rounded-md border border-border px-2 py-1 text-xs bg-surface"
+                  />
+                  <button
+                    type="button"
+                    disabled={deptSubmitting || !newDeptName.trim()}
+                    onClick={handleCreateDepartment}
+                    className="shrink-0 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground hover:bg-primary-hover disabled:opacity-50"
+                  >
+                    {deptSubmitting ? "Adding..." : "Add"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAddDepartment(false);
+                      setDeptError(null);
+                    }}
+                    className="shrink-0 rounded-md border border-border px-2 py-1 text-xs font-medium"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                {deptError ? <p className="text-xs text-red-600 dark:text-red-400">{deptError}</p> : null}
+              </div>
+            ) : null}
           </div>
           <div>
             <label className="block text-xs font-medium text-muted-foreground">Job title (optional)</label>

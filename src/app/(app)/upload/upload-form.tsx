@@ -288,6 +288,7 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
           ref={fileInputRef}
           type="file"
           multiple
+          accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           className="hidden"
           onChange={(e) => {
             if (e.target.files) addFiles(e.target.files);

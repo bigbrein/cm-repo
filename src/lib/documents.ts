@@ -6,9 +6,22 @@ import { employees, documentTypes, cmDocuments } from "@/db/schema";
 import { getStorageAdapter } from "@/lib/storage";
 import { generateDocumentIdentity, computeExpiryDate } from "@/lib/naming";
 import { writeAuditLog } from "@/lib/audit";
+import { convertDocxToHtml } from "@/lib/docx";
+import { htmlToPdfBuffer } from "@/lib/pdf";
 import type { CurrentUser } from "@/lib/session";
 
 export class UploadValidationError extends Error {}
+
+const PDF_MIME_TYPE = "application/pdf";
+const DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+function isPdfFile(fileName: string, mimeType: string): boolean {
+  return mimeType === PDF_MIME_TYPE || /\.pdf$/i.test(fileName);
+}
+
+function isDocxFile(fileName: string, mimeType: string): boolean {
+  return mimeType === DOCX_MIME_TYPE || /\.docx$/i.test(fileName);
+}
 
 export interface CreateCmDocumentInput {
   employeeId: string; // internal Employee.id
@@ -39,6 +52,15 @@ export async function createCmDocument(user: CurrentUser, input: CreateCmDocumen
     throw new UploadValidationError("Provide exactly one of an uploaded file or composed letter text");
   }
 
+  // Every CM Document is stored and downloaded as PDF (FR-REC-1), so a
+  // Word (.docx) upload gets converted below; anything else is rejected
+  // up front rather than silently stored under its original format.
+  const isPdf = input.file ? isPdfFile(input.file.fileName, input.file.mimeType) : false;
+  const isDocx = input.file ? isDocxFile(input.file.fileName, input.file.mimeType) : false;
+  if (input.file && !isPdf && !isDocx) {
+    throw new UploadValidationError("Unsupported file type — upload a PDF or Word (.docx) document");
+  }
+
   const [employee] = await db.select().from(employees).where(eq(employees.id, input.employeeId)).limit(1);
   if (!employee) throw new UploadValidationError("Employee not found");
   if (user.permissions.isDepartmentScoped && user.departmentId && employee.departmentId !== user.departmentId) {
@@ -61,11 +83,23 @@ export async function createCmDocument(user: CurrentUser, input: CreateCmDocumen
   // and only right before it's needed for storage.
   let fileKey: string | null = null;
   let fileBuffer: Buffer | null = null;
+  let fileName = input.file?.fileName ?? null;
+  let mimeType = input.file?.mimeType ?? null;
   if (input.file) {
     fileBuffer = await input.file.load();
+
+    // FR-REC-1: the stored/downloadable rendition is always PDF, so a
+    // Word upload is converted once here rather than at every download.
+    if (isDocx) {
+      const html = await convertDocxToHtml(fileBuffer);
+      fileBuffer = await htmlToPdfBuffer(html);
+      fileName = fileName!.replace(/\.docx$/i, ".pdf");
+      mimeType = "application/pdf";
+    }
+
     const storage = getStorageAdapter();
-    fileKey = `cm-documents/${employee.employeeId}/${nanoid(12)}-${sanitizeFileName(input.file.fileName)}`;
-    await storage.putObject(fileKey, fileBuffer, input.file.mimeType);
+    fileKey = `cm-documents/${employee.employeeId}/${nanoid(12)}-${sanitizeFileName(fileName!)}`;
+    await storage.putObject(fileKey, fileBuffer, mimeType!);
   }
 
   const document = await db.transaction(async (tx) => {
@@ -86,8 +120,8 @@ export async function createCmDocument(user: CurrentUser, input: CreateCmDocumen
         dateIssued: input.dateIssued,
         expiryDate,
         fileKey,
-        fileName: input.file?.fileName ?? null,
-        fileMimeType: input.file?.mimeType ?? null,
+        fileName,
+        fileMimeType: mimeType,
         fileSizeBytes: fileBuffer?.byteLength ?? null,
         bodyHtml: input.bodyHtml ?? null,
         uploadSessionId: input.uploadSessionId ?? null,

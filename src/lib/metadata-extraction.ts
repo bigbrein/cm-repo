@@ -30,8 +30,22 @@ const TYPE_KEYWORDS: { pattern: RegExp; code: string }[] = [
   { pattern: /termination/i, code: "TERMINATION" },
 ];
 
+// Only the document's opening (company name + type heading, per every
+// sample template) is scanned, not the full body — otherwise a letter's own
+// boilerplate mentioning a harsher escalation path in passing (e.g. "may
+// result in a final written warning or dismissal") gets misdetected as that
+// harsher type. A no-op for the filename-only heuristic, whose input is
+// already just one line.
+const HEADING_LINES_SCANNED = 4;
+
 export function detectDocumentTypeCode(text: string): string | null {
-  return TYPE_KEYWORDS.find((t) => t.pattern.test(text))?.code ?? null;
+  const heading = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(0, HEADING_LINES_SCANNED)
+    .join("\n");
+  return TYPE_KEYWORDS.find((t) => t.pattern.test(heading))?.code ?? null;
 }
 
 export function suggestMetadataFromFileName(fileName: string): ExtractedMetadataSuggestion {
@@ -77,7 +91,7 @@ export function extractEmployeeCandidateFromText(text: string): ExtractedEmploye
 
   let fallbackName: string | null = null;
 
-  for (const rawLine of text.split(/\r?\n/)) {
+  for (const rawLine of mergeBareLabelLines(text).split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line) continue;
 
@@ -100,6 +114,32 @@ export function extractEmployeeCandidateFromText(text: string): ExtractedEmploye
   }
 
   return candidate;
+}
+
+// Word (.docx) table cells extract as one paragraph per cell (e.g. "Employee
+// name:" and "Michael Obi" on separate lines), unlike PDF text extraction
+// which keeps a table row's cells on one visual line. A no-op for text that
+// already has same-line "Label: value" pairs, so this is safe to run
+// unconditionally for both PDF- and DOCX-sourced text.
+function mergeBareLabelLines(text: string): string {
+  const lines = text.split(/\r?\n/).map((l) => l.trim());
+  const merged: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (!line) continue;
+    const isBareLabel = /[:\-]\s*$/.test(line);
+    if (isBareLabel) {
+      let j = i + 1;
+      while (j < lines.length && !lines[j]) j++;
+      if (j < lines.length) {
+        merged.push(`${line} ${lines[j]}`);
+        i = j;
+        continue;
+      }
+    }
+    merged.push(line);
+  }
+  return merged.join("\n");
 }
 
 function cleanValue(value: string): string | null {
