@@ -2,34 +2,14 @@
 
 import { useRef, useState } from "react";
 import { nanoid } from "nanoid";
-import { FileText, PenLine, Trash2, UploadCloud, Loader2, CheckCircle2, MinusCircle, XCircle } from "lucide-react";
+import { FileText, PenLine, Trash2, UploadCloud, Loader2, CheckCircle2, MinusCircle, XCircle, Check } from "lucide-react";
 import { EmployeePicker, type EmployeeOption, type EmployeeExtractionSuggestion } from "@/components/employee-picker";
 import { RichTextEditor } from "@/components/rich-text-editor";
+import { useUploadBatch, type BatchItem } from "@/components/upload-batch-context";
 
 interface DocumentTypeOption {
   id: string;
   name: string;
-}
-
-interface BatchItem {
-  clientId: string;
-  mode: "file" | "richtext";
-  file?: File;
-  bodyHtml: string;
-  employee: EmployeeOption | null;
-  employeeSuggestion?: EmployeeExtractionSuggestion | null;
-  // FR-UPL-5: extraction is best-effort and runs in the background per file —
-  // these track its progress/result so the user can see something is
-  // happening, and how much of it actually worked, rather than fields
-  // silently changing (or not) with no explanation.
-  extractionStatus?: "extracting" | "done";
-  extractionOutcome?: "full" | "partial" | "none";
-  documentTypeId: string;
-  validPeriodMonths: number;
-  dateIssued: string; // datetime-local value
-  status: "pending" | "uploading" | "done" | "error";
-  errorMessage?: string;
-  resultDocumentName?: string;
 }
 
 const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB — files larger than this use chunked upload (FR-UPL-10)
@@ -43,7 +23,7 @@ function nowForDateTimeLocal(): string {
 }
 
 export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOption[] }) {
-  const [items, setItems] = useState<BatchItem[]>([]);
+  const { items, addItems, updateItem, removeItem, clearAll } = useUploadBatch();
   const [isDragging, setIsDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitSummary, setSubmitSummary] = useState<{ succeeded: number; failed: number } | null>(null);
@@ -67,7 +47,7 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
       status: "pending",
       extractionStatus: "extracting",
     }));
-    setItems((prev) => [...prev, ...newItems]);
+    addItems(newItems);
 
     // FR-UPL-5: fire-and-forget metadata extraction per file — pre-populates
     // the CM Type when a confident match is found, auto-selects the employee
@@ -78,21 +58,18 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
     // didn't) rather than fields silently changing with no explanation.
     for (const item of newItems) {
       const finish = (outcome: "full" | "partial" | "none", patch: Partial<BatchItem> = {}) => {
-        setItems((prev) =>
-          prev.map((i) => {
-            if (i.clientId !== item.clientId) return i;
-            // Never clobber an employee the user already picked manually
-            // while extraction was still running in the background.
-            const { employee, employeeSuggestion, ...rest } = patch;
-            const employeePatch = i.employee
-              ? {}
-              : {
-                  ...(employee !== undefined ? { employee } : {}),
-                  ...(employeeSuggestion !== undefined ? { employeeSuggestion } : {}),
-                };
-            return { ...i, extractionStatus: "done", extractionOutcome: outcome, ...rest, ...employeePatch };
-          })
-        );
+        updateItem(item.clientId, (i) => {
+          // Never clobber an employee the user already picked manually
+          // while extraction was still running in the background.
+          const { employee, employeeSuggestion, ...rest } = patch;
+          const employeePatch = i.employee
+            ? {}
+            : {
+                ...(employee !== undefined ? { employee } : {}),
+                ...(employeeSuggestion !== undefined ? { employeeSuggestion } : {}),
+              };
+          return { extractionStatus: "done", extractionOutcome: outcome, ...rest, ...employeePatch };
+        });
       };
 
       const formData = new FormData();
@@ -151,8 +128,7 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
   }
 
   function addRichTextItem() {
-    setItems((prev) => [
-      ...prev,
+    addItems([
       {
         clientId: nanoid(),
         mode: "richtext",
@@ -166,12 +142,10 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
     ]);
   }
 
-  function updateItem(clientId: string, patch: Partial<BatchItem>) {
-    setItems((prev) => prev.map((i) => (i.clientId === clientId ? { ...i, ...patch } : i)));
-  }
-
-  function removeItem(clientId: string) {
-    setItems((prev) => prev.filter((i) => i.clientId !== clientId));
+  function handleClearAll() {
+    if (items.length === 0) return;
+    if (!window.confirm(`Remove all ${items.length} queued document${items.length === 1 ? "" : "s"}?`)) return;
+    clearAll();
   }
 
   async function uploadFileChunked(file: File): Promise<string> {
@@ -311,13 +285,23 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
           ))}
 
           <div className="flex items-center justify-between">
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="text-sm font-medium text-muted-foreground hover:underline"
-            >
-              + Add more files
-            </button>
+            <div className="flex items-center gap-4">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="text-sm font-medium text-muted-foreground hover:underline"
+              >
+                + Add more files
+              </button>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={handleClearAll}
+                className="text-sm font-medium text-muted-foreground hover:text-red-600 hover:underline disabled:opacity-50"
+              >
+                Clear all
+              </button>
+            </div>
             <button
               type="button"
               disabled={submitting}
@@ -379,7 +363,7 @@ function BatchItemCard({
             <PenLine className="h-4 w-4 text-muted-foreground" />
           )}
           {item.mode === "file" ? item.file?.name : "Composed letter"}
-          {item.mode === "file" ? <ExtractionIndicator status={item.extractionStatus} outcome={item.extractionOutcome} /> : null}
+          {item.mode === "file" ? <ExtractionIndicator item={item} /> : null}
           {item.status === "done" ? (
             <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
               Saved as {item.resultDocumentName}
@@ -462,18 +446,22 @@ function BatchItemCard({
   );
 }
 
+// Same required fields submitBatch checks — once these are all set (however
+// they got set: extraction, a suggestion, or the user picking manually),
+// the item is ready to submit.
+function isItemComplete(item: BatchItem): boolean {
+  return Boolean(item.employee && item.documentTypeId && item.validPeriodMonths && item.dateIssued);
+}
+
 // FR-UPL-5: visible feedback for the background extraction pass — a spinner
 // while it's running, then a result indicator so the user knows how much
-// (if anything) actually got auto-filled, rather than fields silently
-// changing (or not) with no explanation.
-function ExtractionIndicator({
-  status,
-  outcome,
-}: {
-  status?: "extracting" | "done";
-  outcome?: "full" | "partial" | "none";
-}) {
-  if (status === "extracting") {
+// (if anything) actually got auto-filled. Once every required field is
+// actually filled in — whether that came from extraction or the user
+// finishing the job by hand — this switches to a filled green tick showing
+// the item is ready to submit, rather than staying frozen on whatever the
+// extraction alone managed.
+function ExtractionIndicator({ item }: { item: BatchItem }) {
+  if (item.extractionStatus === "extracting") {
     return (
       <Loader2
         className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground"
@@ -483,16 +471,29 @@ function ExtractionIndicator({
       </Loader2>
     );
   }
-  if (status !== "done" || !outcome) return null;
 
-  if (outcome === "full") {
+  if (isItemComplete(item)) {
+    return (
+      <span
+        className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-emerald-600 dark:bg-emerald-500"
+        aria-label="Ready to submit"
+      >
+        <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />
+        <title>All required fields are filled in — ready to submit</title>
+      </span>
+    );
+  }
+
+  if (item.extractionStatus !== "done" || !item.extractionOutcome) return null;
+
+  if (item.extractionOutcome === "full") {
     return (
       <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-label="Auto-filled from document">
         <title>Auto-filled from document — employee and CM type detected</title>
       </CheckCircle2>
     );
   }
-  if (outcome === "partial") {
+  if (item.extractionOutcome === "partial") {
     return (
       <MinusCircle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" aria-label="Partially auto-filled">
         <title>Partially auto-filled — some details couldn't be extracted, or the employee isn't in the system yet</title>
