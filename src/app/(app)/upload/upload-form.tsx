@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { nanoid } from "nanoid";
 import {
   FileText,
@@ -15,7 +16,7 @@ import {
 } from "lucide-react";
 import { EmployeePicker, type EmployeeOption, type EmployeeExtractionSuggestion } from "@/components/employee-picker";
 import { RichTextEditor } from "@/components/rich-text-editor";
-import { useUploadBatch, type BatchItem } from "@/components/upload-batch-context";
+import { useUploadBatch, getUploadBatchItems, type BatchItem } from "@/components/upload-batch-context";
 
 interface DocumentTypeOption {
   id: string;
@@ -24,6 +25,9 @@ interface DocumentTypeOption {
 
 const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB — files larger than this use chunked upload (FR-UPL-10)
 const DEFAULT_VALID_PERIOD_MONTHS = 6;
+// How long a successfully-uploaded item stays visible (showing "Saved as
+// ...") before it's cleared from the queue on its own.
+const AUTO_CLEAR_DELAY_MS = 4000;
 
 function nowForDateTimeLocal(): string {
   const d = new Date();
@@ -37,13 +41,24 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
   const [isDragging, setIsDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitSummary, setSubmitSummary] = useState<{ succeeded: number; failed: number } | null>(null);
+  const [showDashboardPrompt, setShowDashboardPrompt] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
+  const pendingClearTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  useEffect(() => {
+    const timeouts = pendingClearTimeoutsRef.current;
+    return () => {
+      timeouts.forEach(clearTimeout);
+    };
+  }, []);
 
   function defaultDocumentTypeId() {
     return documentTypes[0]?.id ?? "";
   }
 
   async function addFiles(fileList: FileList | File[]) {
+    setShowDashboardPrompt(false);
     const files = Array.from(fileList);
     const newItems: BatchItem[] = files.map((file) => ({
       clientId: nanoid(),
@@ -137,6 +152,7 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
   }
 
   function addRichTextItem() {
+    setShowDashboardPrompt(false);
     addItems([
       {
         clientId: nanoid(),
@@ -186,6 +202,7 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
 
     let succeeded = 0;
     let failed = 0;
+    const succeededClientIds: string[] = [];
 
     // FR-UPL-6: process and submit items in upload order.
     for (const item of targetItems) {
@@ -217,6 +234,7 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
 
         updateItem(item.clientId, { status: "done", resultDocumentName: data.document?.documentName });
         succeeded++;
+        succeededClientIds.push(item.clientId);
       } catch (error) {
         updateItem(item.clientId, {
           status: "error",
@@ -228,6 +246,21 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
 
     setSubmitSummary({ succeeded, failed });
     setSubmitting(false);
+
+    // Successfully-uploaded items clear themselves out of the queue on
+    // their own after a short delay — long enough to see the "Saved as
+    // ..." confirmation. Anything that failed stays put for the user to
+    // retry. Once the queue empties out as a result, prompt to head to the
+    // dashboard rather than silently leaving an empty upload page.
+    if (succeededClientIds.length > 0) {
+      const timeoutId = setTimeout(() => {
+        succeededClientIds.forEach((clientId) => removeItem(clientId));
+        if (getUploadBatchItems().length === 0) {
+          setShowDashboardPrompt(true);
+        }
+      }, AUTO_CLEAR_DELAY_MS);
+      pendingClearTimeoutsRef.current.push(timeoutId);
+    }
   }
 
   async function submitBatch() {
@@ -296,6 +329,31 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
           }}
         />
       </div>
+
+      {showDashboardPrompt ? (
+        <div className="flex items-center justify-between gap-4 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden />
+            All documents uploaded successfully. View them on the dashboard?
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowDashboardPrompt(false)}
+              className="rounded-md border border-emerald-300 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100 dark:border-emerald-800 dark:hover:bg-emerald-900"
+            >
+              Stay here
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push("/dashboard")}
+              className="rounded-md bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-800"
+            >
+              Go to dashboard
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {items.length > 0 ? (
         <div className="space-y-4">

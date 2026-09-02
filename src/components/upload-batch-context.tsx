@@ -73,3 +73,9 @@ export function useUploadBatch() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   return { items: snapshot, addItems, updateItem, removeItem, clearAll };
 }
+
+// For code running outside render (e.g. a delayed timeout callback) that
+// needs the live queue, not the value captured in a stale render closure.
+export function getUploadBatchItems() {
+  return items;
+}
