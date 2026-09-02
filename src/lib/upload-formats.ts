@@ -1,15 +1,14 @@
 import "server-only";
 import { extractText, getDocumentProxy } from "unpdf";
-import { extractDocxText, convertDocxToHtml } from "@/lib/docx";
-import { extractRtfText } from "@/lib/rtf";
-import {
-  markdownTableRowsToLabelValueLines,
-  markdownToHtml,
-  extractHtmlText,
-  extractHtmlBodyMarkup,
-  plainTextToHtml,
-} from "@/lib/document-formats";
-import { htmlToPdfBuffer } from "@/lib/pdf";
+
+// Each of docx.ts/rtf.ts/document-formats.ts/pdf.ts is only ever needed for
+// the specific format(s) it handles, but a static top-level import is
+// evaluated the moment ANY function from this module is touched — meaning
+// every upload, regardless of its own format, would eagerly load mammoth,
+// rtf-stream-parser, jsdom, marked, and pdfmake (with its own filesystem
+// font lookups) too. Dynamic imports below defer each library to only the
+// switch branch that actually needs it, so e.g. a plain .pdf/.txt upload
+// never touches the others at all.
 
 // Every CM Document upload format this app accepts (FR-UPL-5 extraction and
 // FR-REC-1 always-PDF storage both dispatch off this single list, so
@@ -62,16 +61,24 @@ export async function extractTextForMetadata(format: UploadFormat, buffer: Buffe
       const pdf = await getDocumentProxy(new Uint8Array(buffer));
       return (await extractText(pdf, { mergePages: true })).text;
     }
-    case "docx":
+    case "docx": {
+      const { extractDocxText } = await import("@/lib/docx");
       return extractDocxText(buffer);
+    }
     case "txt":
       return buffer.toString("utf-8");
-    case "md":
+    case "md": {
+      const { markdownTableRowsToLabelValueLines } = await import("@/lib/document-formats");
       return markdownTableRowsToLabelValueLines(buffer.toString("utf-8"));
-    case "html":
+    }
+    case "html": {
+      const { extractHtmlText } = await import("@/lib/document-formats");
       return extractHtmlText(buffer.toString("utf-8"));
-    case "rtf":
+    }
+    case "rtf": {
+      const { extractRtfText } = await import("@/lib/rtf");
       return extractRtfText(buffer);
+    }
   }
 }
 
@@ -90,21 +97,33 @@ export async function convertUploadToPdf(format: UploadFormat, buffer: Buffer): 
 
   let html: string;
   switch (format) {
-    case "docx":
+    case "docx": {
+      const { convertDocxToHtml } = await import("@/lib/docx");
       html = await convertDocxToHtml(buffer);
       break;
-    case "txt":
+    }
+    case "txt": {
+      const { plainTextToHtml } = await import("@/lib/document-formats");
       html = plainTextToHtml(buffer.toString("utf-8"));
       break;
-    case "md":
+    }
+    case "md": {
+      const { markdownToHtml } = await import("@/lib/document-formats");
       html = markdownToHtml(buffer.toString("utf-8"));
       break;
-    case "html":
+    }
+    case "html": {
+      const { extractHtmlBodyMarkup } = await import("@/lib/document-formats");
       html = extractHtmlBodyMarkup(buffer.toString("utf-8"));
       break;
-    case "rtf":
+    }
+    case "rtf": {
+      const { extractRtfText } = await import("@/lib/rtf");
+      const { plainTextToHtml } = await import("@/lib/document-formats");
       html = plainTextToHtml(await extractRtfText(buffer));
       break;
+    }
   }
+  const { htmlToPdfBuffer } = await import("@/lib/pdf");
   return htmlToPdfBuffer(html);
 }
