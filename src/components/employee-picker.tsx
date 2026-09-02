@@ -19,6 +19,7 @@ export interface EmployeeExtractionSuggestion {
   employeeId: string | null;
   department: string | null;
   jobTitle: string | null;
+  email: string | null;
 }
 
 interface DepartmentOption {
@@ -447,6 +448,7 @@ function ManualEntryModal({
             <input
               name="email"
               type="email"
+              defaultValue={initial?.email ?? ""}
               className="mt-1 w-full rounded-md border border-border px-2.5 py-1.5 text-sm bg-surface"
             />
           </div>

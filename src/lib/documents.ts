@@ -6,22 +6,12 @@ import { employees, documentTypes, cmDocuments } from "@/db/schema";
 import { getStorageAdapter } from "@/lib/storage";
 import { generateDocumentIdentity, computeExpiryDate } from "@/lib/naming";
 import { writeAuditLog } from "@/lib/audit";
-import { convertDocxToHtml } from "@/lib/docx";
-import { htmlToPdfBuffer } from "@/lib/pdf";
+import { detectUploadFormat, convertUploadToPdf } from "@/lib/upload-formats";
 import type { CurrentUser } from "@/lib/session";
 
 export class UploadValidationError extends Error {}
 
-const PDF_MIME_TYPE = "application/pdf";
-const DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-
-function isPdfFile(fileName: string, mimeType: string): boolean {
-  return mimeType === PDF_MIME_TYPE || /\.pdf$/i.test(fileName);
-}
-
-function isDocxFile(fileName: string, mimeType: string): boolean {
-  return mimeType === DOCX_MIME_TYPE || /\.docx$/i.test(fileName);
-}
+const SUPPORTED_FORMATS_MESSAGE = "PDF, Word (.docx), plain text (.txt), Markdown (.md), HTML, or RTF";
 
 export interface CreateCmDocumentInput {
   employeeId: string; // internal Employee.id
@@ -52,13 +42,12 @@ export async function createCmDocument(user: CurrentUser, input: CreateCmDocumen
     throw new UploadValidationError("Provide exactly one of an uploaded file or composed letter text");
   }
 
-  // Every CM Document is stored and downloaded as PDF (FR-REC-1), so a
-  // Word (.docx) upload gets converted below; anything else is rejected
-  // up front rather than silently stored under its original format.
-  const isPdf = input.file ? isPdfFile(input.file.fileName, input.file.mimeType) : false;
-  const isDocx = input.file ? isDocxFile(input.file.fileName, input.file.mimeType) : false;
-  if (input.file && !isPdf && !isDocx) {
-    throw new UploadValidationError("Unsupported file type — upload a PDF or Word (.docx) document");
+  // Every CM Document is stored and downloaded as PDF (FR-REC-1), so
+  // anything that isn't already a PDF gets converted below; a format we
+  // don't recognize is rejected up front rather than silently stored as-is.
+  const format = input.file ? detectUploadFormat(input.file.fileName, input.file.mimeType) : null;
+  if (input.file && !format) {
+    throw new UploadValidationError(`Unsupported file type — upload one of: ${SUPPORTED_FORMATS_MESSAGE}`);
   }
 
   const [employee] = await db.select().from(employees).where(eq(employees.id, input.employeeId)).limit(1);
@@ -88,12 +77,12 @@ export async function createCmDocument(user: CurrentUser, input: CreateCmDocumen
   if (input.file) {
     fileBuffer = await input.file.load();
 
-    // FR-REC-1: the stored/downloadable rendition is always PDF, so a
-    // Word upload is converted once here rather than at every download.
-    if (isDocx) {
-      const html = await convertDocxToHtml(fileBuffer);
-      fileBuffer = await htmlToPdfBuffer(html);
-      fileName = fileName!.replace(/\.docx$/i, ".pdf");
+    // FR-REC-1: the stored/downloadable rendition is always PDF, so
+    // anything not already a PDF is converted once here rather than at
+    // every download.
+    if (format !== "pdf") {
+      fileBuffer = await convertUploadToPdf(format!, fileBuffer);
+      fileName = fileName!.replace(/\.[^.]+$/, ".pdf");
       mimeType = "application/pdf";
     }
 

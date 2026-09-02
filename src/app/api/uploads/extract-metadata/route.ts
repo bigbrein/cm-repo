@@ -1,5 +1,4 @@
 import type { NextRequest } from "next/server";
-import { extractText, getDocumentProxy } from "unpdf";
 import { withApiAuth } from "@/lib/session";
 import {
   suggestMetadataFromFileName,
@@ -7,18 +6,17 @@ import {
   extractEmployeeCandidateFromText,
   type ExtractedEmployeeCandidate,
 } from "@/lib/metadata-extraction";
-import { extractDocxText } from "@/lib/docx";
+import { detectUploadFormat, extractTextForMetadata } from "@/lib/upload-formats";
 
 // FR-UPL-5: async metadata extraction, pre-populating the form without
 // persisting anything (FR-UPL-7 still requires explicit user confirmation).
-// Two signals: the filename (always) and, for PDFs/Word docs under the size
-// cap, the document's own text — scanned for "Label: value" lines. CM
+// Two signals: the filename (always) and, for a recognized format under the
+// size cap, the document's own text — scanned for "Label: value" lines. CM
 // templates vary a lot between organizations, so content extraction is
 // best-effort: a narrative-only letter with no label:value layout just
 // yields nulls, and the client only ever treats these as an editable
 // suggestion.
 const MAX_CONTENT_EXTRACTION_BYTES = 15 * 1024 * 1024;
-const DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 export async function POST(request: NextRequest) {
   return withApiAuth(
@@ -33,19 +31,13 @@ export async function POST(request: NextRequest) {
       let documentTypeCode = nameHeuristic.documentTypeCode;
       let employee: ExtractedEmployeeCandidate | null = null;
 
-      const isPdf = filePart instanceof Blob && (filePart.type === "application/pdf" || /\.pdf$/i.test(fileName));
-      const isDocx = filePart instanceof Blob && (filePart.type === DOCX_MIME_TYPE || /\.docx$/i.test(fileName));
+      const format = filePart instanceof Blob ? detectUploadFormat(fileName, filePart.type) : null;
       const withinSizeCap = filePart instanceof Blob && filePart.size > 0 && filePart.size <= MAX_CONTENT_EXTRACTION_BYTES;
 
-      if (filePart instanceof Blob && withinSizeCap && (isPdf || isDocx)) {
+      if (filePart instanceof Blob && withinSizeCap && format) {
         try {
-          const text = isPdf
-            ? await (async () => {
-                const bytes = new Uint8Array(await filePart.arrayBuffer());
-                const pdf = await getDocumentProxy(bytes);
-                return (await extractText(pdf, { mergePages: true })).text;
-              })()
-            : await extractDocxText(Buffer.from(await filePart.arrayBuffer()));
+          const buffer = Buffer.from(await filePart.arrayBuffer());
+          const text = await extractTextForMetadata(format, buffer);
 
           documentTypeCode = detectDocumentTypeCode(text) ?? documentTypeCode;
           const candidate = extractEmployeeCandidateFromText(text);
