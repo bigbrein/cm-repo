@@ -89,9 +89,12 @@ export function Sidebar({ user, children }: { user: CurrentUser; children: React
   const visibleLinks = links.filter((l) => l.show);
 
   return (
-    <div className="flex min-h-screen">
-      {/* Desktop sidebar — always mounted, hidden below the `sm` breakpoint */}
-      <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-surface sm:flex">
+    <div className="flex h-dvh">
+      {/* Desktop sidebar — always mounted, hidden below the `sm` breakpoint.
+          Height is pinned to the viewport rather than growing with page
+          content; its own overflow-y-auto only ever kicks in if the nav +
+          footer stack is taller than a short viewport can fit. */}
+      <aside className="hidden w-60 shrink-0 flex-col overflow-y-auto border-r border-border bg-surface sm:flex">
         <div className="px-4 py-4">
           <Link href="/dashboard" className="text-base font-semibold tracking-tight text-foreground">
             CM Repository
@@ -105,7 +108,7 @@ export function Sidebar({ user, children }: { user: CurrentUser; children: React
       {mobileOpen ? (
         <div className="fixed inset-0 z-40 flex sm:hidden">
           <div className="absolute inset-0 bg-black/30" onClick={() => setMobileOpen(false)} aria-hidden />
-          <aside className="relative flex w-64 flex-col border-r border-border bg-surface">
+          <aside className="relative flex w-64 flex-col overflow-y-auto border-r border-border bg-surface">
             <div className="flex items-center justify-between px-4 py-4">
               <Link href="/dashboard" className="text-base font-semibold tracking-tight text-foreground">
                 CM Repository
@@ -125,7 +128,7 @@ export function Sidebar({ user, children }: { user: CurrentUser; children: React
         </div>
       ) : null}
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Mobile top bar */}
         <div className="flex items-center justify-between border-b border-border bg-surface px-4 py-3 sm:hidden">
           <button
@@ -140,7 +143,9 @@ export function Sidebar({ user, children }: { user: CurrentUser; children: React
           <ThemeToggle />
         </div>
 
-        <main className="flex-1 overflow-x-hidden px-4 py-6 sm:px-8">
+        {/* The content column scrolls on its own — the sidebar beside it
+            never moves with it. */}
+        <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 py-6 sm:px-8">
           <div className="mx-auto max-w-6xl">{children}</div>
         </main>
       </div>
