@@ -38,6 +38,9 @@ async function main() {
       { name: "Verbal Warning", code: "VERBAL", sortOrder: 1 },
       { name: "Written Warning", code: "WRITTEN", sortOrder: 2 },
       { name: "Final Warning", code: "FINAL", sortOrder: 3 },
+      { name: "Suspension Notice", code: "SUSPENSION", sortOrder: 4 },
+      { name: "PIP Notice", code: "PIP", sortOrder: 5 },
+      { name: "Termination Notice", code: "TERMINATION", sortOrder: 6 },
     ].map((t) => db.insert(schema.documentTypes).values(t).onConflictDoNothing({ target: schema.documentTypes.code }))
   );
 

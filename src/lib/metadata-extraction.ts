@@ -20,9 +20,14 @@ export interface ExtractedEmployeeCandidate {
 }
 
 const TYPE_KEYWORDS: { pattern: RegExp; code: string }[] = [
-  { pattern: /final[\s_-]?warning/i, code: "FINAL" },
+  // Checked before WRITTEN so a "Final Written Warning" filename doesn't
+  // get misclassified as a plain Written Warning.
+  { pattern: /final[\s_-]?(written[\s_-]?)?warning/i, code: "FINAL" },
   { pattern: /written[\s_-]?warning/i, code: "WRITTEN" },
   { pattern: /verbal[\s_-]?warning/i, code: "VERBAL" },
+  { pattern: /suspension/i, code: "SUSPENSION" },
+  { pattern: /\bpip\b/i, code: "PIP" },
+  { pattern: /termination/i, code: "TERMINATION" },
 ];
 
 export function detectDocumentTypeCode(text: string): string | null {
