@@ -28,6 +28,9 @@ const DEFAULT_VALID_PERIOD_MONTHS = 6;
 // How long a successfully-uploaded item stays visible (showing "Saved as
 // ...") before it's cleared from the queue on its own.
 const AUTO_CLEAR_DELAY_MS = 4000;
+// Fade-out duration for both auto-clear and manual removal — must match the
+// Tailwind `duration-*` class applied to the item wrapper below.
+const REMOVE_FADE_MS = 200;
 
 function nowForDateTimeLocal(): string {
   const d = new Date();
@@ -37,7 +40,7 @@ function nowForDateTimeLocal(): string {
 }
 
 export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOption[] }) {
-  const { items, addItems, updateItem, removeItem, clearAll } = useUploadBatch();
+  const { items, addItems, updateItem, removeItem } = useUploadBatch();
   const [isDragging, setIsDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitSummary, setSubmitSummary] = useState<{ succeeded: number; failed: number } | null>(null);
@@ -170,7 +173,7 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
   function handleClearAll() {
     if (items.length === 0) return;
     if (!window.confirm(`Remove all ${items.length} queued document${items.length === 1 ? "" : "s"}?`)) return;
-    clearAll();
+    fadeOutAndRemove(items.map((i) => i.clientId));
   }
 
   async function uploadFileChunked(file: File): Promise<string> {
@@ -254,13 +257,28 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
     // dashboard rather than silently leaving an empty upload page.
     if (succeededClientIds.length > 0) {
       const timeoutId = setTimeout(() => {
-        succeededClientIds.forEach((clientId) => removeItem(clientId));
-        if (getUploadBatchItems().length === 0) {
-          setShowDashboardPrompt(true);
-        }
+        succeededClientIds.forEach((clientId) => updateItem(clientId, { removing: true }));
+        const fadeTimeoutId = setTimeout(() => {
+          succeededClientIds.forEach((clientId) => removeItem(clientId));
+          if (getUploadBatchItems().length === 0) {
+            setShowDashboardPrompt(true);
+          }
+        }, REMOVE_FADE_MS);
+        pendingClearTimeoutsRef.current.push(fadeTimeoutId);
       }, AUTO_CLEAR_DELAY_MS);
       pendingClearTimeoutsRef.current.push(timeoutId);
     }
+  }
+
+  // Shared by the per-item trash button and "Clear all" — marks the item(s)
+  // as removing so the fade-out transition plays, then drops them from the
+  // queue once it's finished.
+  function fadeOutAndRemove(clientIds: string[]) {
+    clientIds.forEach((clientId) => updateItem(clientId, { removing: true }));
+    const timeoutId = setTimeout(() => {
+      clientIds.forEach((clientId) => removeItem(clientId));
+    }, REMOVE_FADE_MS);
+    pendingClearTimeoutsRef.current.push(timeoutId);
   }
 
   async function submitBatch() {
@@ -409,16 +427,22 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
           </div>
 
           {items.map((item, index) => (
-            <BatchItemCard
+            <div
               key={item.clientId}
-              index={index}
-              item={item}
-              documentTypes={documentTypes}
-              submitting={submitting}
-              onChange={(patch) => updateItem(item.clientId, patch)}
-              onRemove={() => removeItem(item.clientId)}
-              onUpload={() => submitItems([item])}
-            />
+              className={`transition-opacity duration-200 ${
+                item.removing ? "pointer-events-none opacity-0" : "opacity-100"
+              }`}
+            >
+              <BatchItemCard
+                index={index}
+                item={item}
+                documentTypes={documentTypes}
+                submitting={submitting}
+                onChange={(patch) => updateItem(item.clientId, patch)}
+                onRemove={() => fadeOutAndRemove([item.clientId])}
+                onUpload={() => submitItems([item])}
+              />
+            </div>
           ))}
 
           {submitSummary ? (

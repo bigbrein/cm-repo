@@ -22,6 +22,10 @@ export interface BatchItem {
   status: "pending" | "uploading" | "done" | "error";
   errorMessage?: string;
   resultDocumentName?: string;
+  // Set briefly before an item is actually removed from the queue, so the
+  // UI can play a fade-out transition instead of the row disappearing
+  // instantly — both for manual removal and the post-upload auto-clear.
+  removing?: boolean;
 }
 
 // A plain module-level store rather than React Context: this app's Next.js
