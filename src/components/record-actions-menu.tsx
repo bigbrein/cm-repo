@@ -98,6 +98,15 @@ export function RecordActionsMenu({
                 <a
                   role="menuitem"
                   href={`/api/documents/${documentId}/download`}
+                  // Without `download`, the browser first navigates the link
+                  // to "peek" at the response, discovers via
+                  // Content-Disposition that it can't render it, cancels
+                  // that navigation, and re-issues the whole request chain
+                  // from scratch through its download manager — hitting this
+                  // route (and its audit-log write) twice per click. The
+                  // `download` attribute tells it upfront this is a
+                  // download, so it only ever requests it once.
+                  download
                   className="flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-surface-muted"
                   onClick={() => setOpen(false)}
                 >
