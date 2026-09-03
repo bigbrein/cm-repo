@@ -9,7 +9,18 @@ import { auth } from "@/auth";
 // from lib/session.ts (see that file's comment; Next's own proxy docs warn
 // against relying on Proxy alone since a matcher change can silently drop
 // coverage while a Server Function still executes).
-const PUBLIC_PATHS = ["/login", "/register", "/api/auth"];
+const PUBLIC_PATHS = [
+  "/login",
+  "/register",
+  "/api/auth",
+  // SEO/crawler file conventions (app/robots.ts, app/sitemap.ts,
+  // app/opengraph-image.tsx) — unauthenticated crawlers and social-media
+  // link-preview bots need these to actually resolve, not the login redirect.
+  "/robots.txt",
+  "/sitemap.xml",
+  "/opengraph-image",
+  "/twitter-image",
+];
 
 export default auth((req) => {
   const { pathname } = req.nextUrl;

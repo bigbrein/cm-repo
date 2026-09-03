@@ -2,11 +2,13 @@ import type { Metadata } from "next";
 import { ThemeScript } from "@/components/theme-script";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import { SITE_URL, SITE_NAME, SITE_DESCRIPTION } from "@/lib/site";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "CM Repository",
-  description: "Consequence Management document repository, integrated with SAP SuccessFactors.",
+  metadataBase: new URL(SITE_URL),
+  title: { default: SITE_NAME, template: `%s · ${SITE_NAME}` },
+  description: SITE_DESCRIPTION,
 };
 
 export default function RootLayout({
