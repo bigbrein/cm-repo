@@ -24,7 +24,12 @@ interface DashboardSearchParams {
   sort?: string;
   direction?: string;
   page?: string;
+  pageSize?: string;
 }
+
+const MIN_PAGE_SIZE = 1;
+const MAX_PAGE_SIZE = 20;
+const DEFAULT_PAGE_SIZE = 10;
 
 function buildHref(current: DashboardSearchParams, overrides: Partial<DashboardSearchParams>) {
   const merged = { ...current, ...overrides };
@@ -34,6 +39,7 @@ function buildHref(current: DashboardSearchParams, overrides: Partial<DashboardS
   if (merged.sort) params.set("sort", merged.sort);
   if (merged.direction) params.set("direction", merged.direction);
   if (merged.page && merged.page !== "1") params.set("page", merged.page);
+  if (merged.pageSize && merged.pageSize !== String(DEFAULT_PAGE_SIZE)) params.set("pageSize", merged.pageSize);
   const qs = params.toString();
   return qs ? `/dashboard?${qs}` : "/dashboard";
 }
@@ -49,8 +55,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const sort = (COLUMNS.some((c) => c.key === sp.sort) ? sp.sort : "dateIssued") as SortColumn;
   const direction = sp.direction === "asc" ? "asc" : "desc";
   const page = Number(sp.page) > 0 ? Number(sp.page) : 1;
+  const pageSize = Number(sp.pageSize) > 0
+    ? Math.min(MAX_PAGE_SIZE, Math.max(MIN_PAGE_SIZE, Math.trunc(Number(sp.pageSize))))
+    : DEFAULT_PAGE_SIZE;
 
-  const { rows, total, pageCount } = await queryCmDocuments(user, { q: sp.q, status, sort, direction, page });
+  const { rows, total, pageCount } = await queryCmDocuments(user, { q: sp.q, status, sort, direction, page, pageSize });
 
   return (
     <div>
@@ -89,6 +98,21 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             <option value="EXPIRED">Expired</option>
             <option value="ALL">All</option>
           </select>
+        </div>
+        <div>
+          <label htmlFor="pageSize" className="block text-xs font-medium text-muted-foreground">
+            Per page
+          </label>
+          <input
+            id="pageSize"
+            name="pageSize"
+            type="number"
+            min={MIN_PAGE_SIZE}
+            max={MAX_PAGE_SIZE}
+            step={1}
+            defaultValue={pageSize}
+            className="mt-1 w-20 rounded-md border border-border px-3 py-2 text-sm bg-surface"
+          />
         </div>
         <input type="hidden" name="sort" value={sort} />
         <input type="hidden" name="direction" value={direction} />
