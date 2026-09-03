@@ -20,6 +20,11 @@ export interface ExtractedEmployeeCandidate {
   email: string | null;
 }
 
+export interface ExtractedDocumentDetails {
+  dateIssued: string | null; // ISO date, YYYY-MM-DD (no time — the source text never carries one)
+  validPeriodMonths: number | null;
+}
+
 const TYPE_KEYWORDS: { pattern: RegExp; code: string }[] = [
   // Checked before WRITTEN so a "Final Written Warning" filename doesn't
   // get misclassified as a plain Written Warning.
@@ -186,7 +191,7 @@ export function extractEmployeeCandidateFromText(text: string): ExtractedEmploye
 // A no-op for text that already has same-line "Label: value" pairs, so this
 // is safe to run unconditionally for both PDF- and DOCX-sourced text.
 const BARE_LABEL_TEXT_PATTERN =
-  /^(?:employee\s*(?:id|no\.?|number)|emp\.?\s*id|staff\s*id|personnel\s*(?:no\.?|number)|employee\s*name|name\s*of\s*employee|department|dept\.?|division|job\s*title|position|designation|employee\s*e-?mail|e-?mail(?:\s*address)?)\s*[:\-]?\s*$/i;
+  /^(?:employee\s*(?:id|no\.?|number)|emp\.?\s*id|staff\s*id|personnel\s*(?:no\.?|number)|employee\s*name|name\s*of\s*employee|department|dept\.?|division|job\s*title|position|designation|employee\s*e-?mail|e-?mail(?:\s*address)?|date\s*issued|issue\s*date|issued\s*(?:on|date)|date\s*of\s*issue|letter\s*date)\s*[:\-]?\s*$/i;
 
 function mergeBareLabelLines(text: string): string {
   const lines = text.split(/\r?\n/).map((l) => l.trim());
@@ -359,6 +364,216 @@ function synthesizeFromNarrativeDetails(text: string): string {
       return synthesized.length ? [line, ...synthesized] : [line];
     })
     .join("\n");
+}
+
+// Ordered most-specific-first, same rationale as FIELD_LABELS above: a
+// dedicated "Date Issued"/"Issue Date" label should always win over the
+// generic "Date:" a letter's own header conventionally carries.
+const DATE_ISSUED_LABEL_PATTERN =
+  /^(date\s*issued|issue\s*date|issued\s*(?:on|date)|date\s*of\s*issue|letter\s*date)\s*[:\-]\s*(.+)$/i;
+// A bare "Date:" line is the letter's own header date in most CM templates
+// (i.e. the issue date), but it's a much weaker signal than an explicit
+// label above — only trusted as a fallback when nothing more specific
+// matches anywhere in the document.
+const BARE_DATE_LABEL_PATTERN = /^date\s*[:\-]\s*(.+)$/i;
+
+// Separator optional, same reasoning as VALID_UNTIL_LABEL_PATTERN below —
+// "Valid for 12 months" is natural prose with no colon, while
+// "Validity Period:" conventionally has one; both need to match either way.
+const VALID_MONTHS_LABEL_PATTERN =
+  /^(validity\s*period|valid(?:ity)?\s*for|valid\s*period|period\s*of\s*validity)\s*[:\-]?\s*(.+)$/i;
+// Unlike the label patterns above, this is searched anywhere in the line
+// (not anchored to its start) and doesn't require a colon/dash separator —
+// "...this warning is valid until 09/15/2026" is at least as common a
+// phrasing in CM letters as a dedicated "Valid Until:" line.
+const VALID_UNTIL_LABEL_PATTERN =
+  /\b(valid\s*(?:until|through|thru)|expiry\s*date|expiration\s*date|date\s*of\s*expiry)\s*[:\-]?\s*(.+)$/i;
+
+// None of the real sample CM letters use a labeled "Validity Period:"
+// field at all — every one instead states it as prose describing how long
+// the record stays on the employee's file, e.g. "This warning will remain
+// active on your file for 6 months.", "...remain on your personnel file
+// for a period of twelve (12) months...", "...will stay on your file for
+// six months.", "...will fall away after three months of sustained
+// improvement." Matched against the whole text rather than line-by-line,
+// since \s+ already bridges a mid-sentence line wrap either way, and
+// anchored to one of these specific retention verbs so it never matches
+// an unrelated "X months" elsewhere in the body (e.g. an improvement
+// target like "maintain attendance ... over the next 3 months").
+const RETENTION_PERIOD_PATTERN =
+  /(?:remain(?:s)?\s+(?:active\s+)?(?:on\s+(?:your\s+)?(?:personnel\s+)?file\s+)?for|stay(?:s)?\s+on\s+(?:your\s+)?file\s+for|fall(?:s)?\s+away\s+after)\s+(?:a\s+period\s+of\s+)?([a-z]+|\d+)\s*(?:\(\s*(\d+)\s*\))?\s*months?\b/i;
+
+const NUMBER_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
+  nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14,
+  fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20,
+};
+
+function wordOrNumeralToNumber(word: string): number | null {
+  if (/^\d+$/.test(word)) return Number(word);
+  return NUMBER_WORDS[word.toLowerCase()] ?? null;
+}
+
+// A number in parens right after the word form (e.g. "twelve (12) months")
+// is the more reliable of the two — already numeric, no word-to-number
+// lookup needed.
+function extractRetentionPeriodMonths(text: string): number | null {
+  const match = text.match(RETENTION_PERIOD_PATTERN);
+  if (!match) return null;
+  if (match[2]) return Number(match[2]);
+  return wordOrNumeralToNumber(match[1]!);
+}
+
+// Formal letters that skip a "Date:" label entirely still conventionally
+// place a bare date on its own line right after the letterhead/address
+// block and before the recipient's name — e.g. a line that is nothing but
+// "25 May 2026". Scanning only the first several non-blank lines (not the
+// whole document) keeps this from ever picking up an unrelated bare date
+// mentioned deep in the body.
+const HEADING_LINES_FOR_DATE_FALLBACK = 6;
+const STANDALONE_DATE_LINE_PATTERN =
+  /^(?:\d{4}-\d{1,2}-\d{1,2}|[A-Za-z]+\s+\d{1,2},?\s+\d{4}|\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+,?\s+\d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{4})\.?$/i;
+
+function extractPositionalDateFallback(text: string): string | null {
+  const headingLines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(0, HEADING_LINES_FOR_DATE_FALLBACK);
+
+  for (const line of headingLines) {
+    if (STANDALONE_DATE_LINE_PATTERN.test(line)) return parseDateLoose(line);
+  }
+  return null;
+}
+
+const MONTH_NAMES = [
+  "january", "february", "march", "april", "may", "june",
+  "july", "august", "september", "october", "november", "december",
+];
+
+/**
+ * Parses the handful of date formats CM letters actually use in practice
+ * ("March 3, 2026", "3 March 2026", "2026-03-03", "03/03/2026") into an ISO
+ * YYYY-MM-DD string. Deliberately not Date.parse: its format support is
+ * inconsistent across engines and it silently guesses on ambiguous
+ * DD/MM-vs-MM/DD input the same way this does, without the caller being
+ * able to tell whether the parse actually succeeded.
+ */
+function parseDateLoose(raw: string): string | null {
+  const value = raw.trim().replace(/[.,]+$/, "");
+
+  // Anchored only at the start, not the end — callers like
+  // VALID_UNTIL_LABEL_PATTERN can hand over an embedded match with trailing
+  // sentence text after the date (e.g. "09/15/2026, unless renewed").
+  let m = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return isoDateOrNull(Number(m[1]), Number(m[2]), Number(m[3]));
+
+  m = value.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})/);
+  if (m) {
+    const month = MONTH_NAMES.indexOf(m[1]!.toLowerCase());
+    if (month >= 0) return isoDateOrNull(Number(m[3]), month + 1, Number(m[2]));
+  }
+
+  m = value.match(/^(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+),?\s+(\d{4})/);
+  if (m) {
+    const month = MONTH_NAMES.indexOf(m[2]!.toLowerCase());
+    if (month >= 0) return isoDateOrNull(Number(m[3]), month + 1, Number(m[1]));
+  }
+
+  // MM/DD/YYYY vs DD/MM/YYYY is inherently ambiguous without a locale; if
+  // the first segment can't possibly be a month, it must be the day.
+  m = value.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+  if (m) {
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    const [month, day] = a > 12 && b <= 12 ? [b, a] : [a, b];
+    return isoDateOrNull(Number(m[3]), month, day);
+  }
+
+  return null;
+}
+
+function isoDateOrNull(year: number, month: number, day: number): string | null {
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  // Rejects e.g. "February 30" — the components round-trip through Date
+  // wrap into a different day, which Date.UTC accepts silently.
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function parseValidPeriodMonths(raw: string): number | null {
+  const value = raw.trim();
+  const months = value.match(/(\d+)\s*month/i);
+  if (months) return Number(months[1]);
+  const years = value.match(/(\d+)\s*year/i);
+  if (years) return Number(years[1]) * 12;
+  return null;
+}
+
+// Whole calendar months between two ISO dates, floored the same way
+// computeExpiryDate's addMonths is applied forward — used to back-derive a
+// validity period from a "Valid until <date>" label when no explicit
+// "X months" figure is given.
+function monthsBetweenIsoDates(fromIso: string, toIso: string): number | null {
+  const from = new Date(`${fromIso}T00:00:00Z`);
+  const to = new Date(`${toIso}T00:00:00Z`);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return null;
+
+  let months = (to.getUTCFullYear() - from.getUTCFullYear()) * 12 + (to.getUTCMonth() - from.getUTCMonth());
+  if (to.getUTCDate() < from.getUTCDate()) months -= 1;
+  return months > 0 ? months : null;
+}
+
+/**
+ * Scans PDF/DOCX-extracted text for a "Date Issued"/"Validity Period"
+ * label, same best-effort "Label: value" heuristic as
+ * extractEmployeeCandidateFromText. A "Valid until <date>" label is
+ * accepted too and converted to a month count relative to the detected
+ * issue date; either field is simply null when nothing matches.
+ */
+export function extractDocumentDetailsFromText(text: string): ExtractedDocumentDetails {
+  let dateIssued: string | null = null;
+  let bareDateFallback: string | null = null;
+  let validPeriodMonths: number | null = null;
+  let validUntil: string | null = null;
+
+  // Some form-style templates drop the colon entirely — a bare "Date
+  // issued" cell followed by "1 June 2026" in the next paragraph, same
+  // convention as the bare employee-field labels handled elsewhere.
+  const preprocessed = mergeBareLabelLines(text);
+
+  for (const rawLine of preprocessed.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    if (!dateIssued) {
+      const m = line.match(DATE_ISSUED_LABEL_PATTERN);
+      if (m) dateIssued = parseDateLoose(m[2]!);
+    }
+    if (!bareDateFallback) {
+      const m = line.match(BARE_DATE_LABEL_PATTERN);
+      if (m) bareDateFallback = parseDateLoose(m[1]!);
+    }
+    if (!validPeriodMonths) {
+      const m = line.match(VALID_MONTHS_LABEL_PATTERN);
+      if (m) validPeriodMonths = parseValidPeriodMonths(m[2]!);
+    }
+    if (!validUntil) {
+      const m = line.match(VALID_UNTIL_LABEL_PATTERN);
+      if (m) validUntil = parseDateLoose(m[2]!);
+    }
+  }
+
+  if (!dateIssued) dateIssued = bareDateFallback;
+  if (!dateIssued) dateIssued = extractPositionalDateFallback(text);
+  if (!validPeriodMonths && validUntil && dateIssued) {
+    validPeriodMonths = monthsBetweenIsoDates(dateIssued, validUntil);
+  }
+  if (!validPeriodMonths) validPeriodMonths = extractRetentionPeriodMonths(text);
+
+  return { dateIssued, validPeriodMonths };
 }
 
 function cleanValue(value: string): string | null {

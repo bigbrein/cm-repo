@@ -4,7 +4,9 @@ import {
   suggestMetadataFromFileName,
   detectDocumentTypeCode,
   extractEmployeeCandidateFromText,
+  extractDocumentDetailsFromText,
   type ExtractedEmployeeCandidate,
+  type ExtractedDocumentDetails,
 } from "@/lib/metadata-extraction";
 import { detectUploadFormat, extractTextForMetadata } from "@/lib/upload-formats";
 
@@ -30,6 +32,7 @@ export async function POST(request: NextRequest) {
       const nameHeuristic = suggestMetadataFromFileName(fileName);
       let documentTypeCode = nameHeuristic.documentTypeCode;
       let employee: ExtractedEmployeeCandidate | null = null;
+      let documentDetails: ExtractedDocumentDetails | null = null;
 
       const format = filePart instanceof Blob ? detectUploadFormat(fileName, filePart.type) : null;
       const withinSizeCap = filePart instanceof Blob && filePart.size > 0 && filePart.size <= MAX_CONTENT_EXTRACTION_BYTES;
@@ -44,6 +47,11 @@ export async function POST(request: NextRequest) {
           if (candidate.fullName || candidate.employeeId) {
             employee = candidate;
           }
+
+          const details = extractDocumentDetailsFromText(text);
+          if (details.dateIssued || details.validPeriodMonths) {
+            documentDetails = details;
+          }
         } catch (error) {
           // Malformed/unreadable file (e.g. a scanned-image PDF) — fall back
           // to the filename-only suggestion rather than failing the request.
@@ -56,6 +64,7 @@ export async function POST(request: NextRequest) {
           documentTypeCode,
           employeeIdHint: nameHeuristic.employeeIdHint,
           employee,
+          documentDetails,
         },
       });
     },

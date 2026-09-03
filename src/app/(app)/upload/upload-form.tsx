@@ -106,7 +106,12 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
         .then((r) => r.json())
         .then(async (data) => {
           const suggestion = data?.suggestion as
-            { documentTypeCode: string | null; employee: EmployeeExtractionSuggestion | null } | undefined;
+            | {
+                documentTypeCode: string | null;
+                employee: EmployeeExtractionSuggestion | null;
+                documentDetails: { dateIssued: string | null; validPeriodMonths: number | null } | null;
+              }
+            | undefined;
           if (!suggestion) {
             finish("none");
             return;
@@ -118,9 +123,21 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
             documentTypeId = documentTypes.find((dt) => dt.name.toUpperCase().startsWith(code.slice(0, 4)))?.id ?? null;
           }
 
+          // Same best-effort pre-fill as CM Type above — only ever overwrites
+          // the field's default, never something the user has already typed
+          // over it (extraction resolves well before that's realistic).
+          const details = suggestion.documentDetails;
+          const detailsPatch: Partial<BatchItem> = {};
+          if (details?.dateIssued) detailsPatch.dateIssued = `${details.dateIssued}T00:00`;
+          if (details?.validPeriodMonths) detailsPatch.validPeriodMonths = details.validPeriodMonths;
+          const hasDetails = Object.keys(detailsPatch).length > 0;
+
           const candidate = suggestion.employee;
           if (!candidate || (!candidate.fullName && !candidate.employeeId)) {
-            finish(documentTypeId ? "partial" : "none", documentTypeId ? { documentTypeId } : {});
+            finish(documentTypeId || hasDetails ? "partial" : "none", {
+              ...(documentTypeId ? { documentTypeId } : {}),
+              ...detailsPatch,
+            });
             return;
           }
 
@@ -141,11 +158,13 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
           if (match) {
             finish(documentTypeId ? "full" : "partial", {
               ...(documentTypeId ? { documentTypeId } : {}),
+              ...detailsPatch,
               employee: match,
             });
           } else {
             finish("partial", {
               ...(documentTypeId ? { documentTypeId } : {}),
+              ...detailsPatch,
               employeeSuggestion: candidate,
             });
           }
