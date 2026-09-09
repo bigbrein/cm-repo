@@ -321,7 +321,7 @@ function ManualEntryModal({
 
   return (
     <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-lg bg-surface p-5 shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-lg bg-surface p-5 shadow-xl">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-semibold">Manual employee entry</h3>
           <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground">

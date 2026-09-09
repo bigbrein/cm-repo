@@ -60,6 +60,18 @@ body {
   font-family: var(--font-sans);
 }
 
+/* iOS Safari zooms the whole page in on focus for any text input/select
+   under 16px, regardless of the meta viewport tag — nothing to do with
+   layout, but it's the single most common thing that reads as "not mobile
+   friendly" on a phone. Scoped to small viewports so desktop keeps text-sm. */
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 /* Minimal content styling for the Tiptap rich text editor (FR-UPL-3) —
    Tailwind's preflight strips default list/heading styles globally, so
    restore just enough for a composed CM letter to be legible. */
