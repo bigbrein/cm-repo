@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { nanoid } from "nanoid";
 import {
@@ -32,6 +32,45 @@ const AUTO_CLEAR_DELAY_MS = 4000;
 // Tailwind `duration-*` class applied to the item wrapper below.
 const REMOVE_FADE_MS = 200;
 
+// FLIP-style layout animation: when an item is removed (or added) and the
+// items below it shift into the gap, this plays that shift as a slide
+// instead of letting it snap instantly. Reads each item's position straight
+// off the DOM via a data-client-id attribute rather than through React state,
+// since the "before" position only matters for one frame and isn't otherwise
+// worth modeling as component state.
+function useSlideOnReorder(items: { clientId: string }[]) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const positionsRef = useRef(new Map<string, number>());
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const previous = positionsRef.current;
+    const next = new Map<string, number>();
+
+    for (const node of container.children) {
+      const el = node as HTMLElement;
+      const clientId = el.dataset.clientId;
+      if (!clientId) continue;
+      const top = el.getBoundingClientRect().top;
+      next.set(clientId, top);
+      const prevTop = previous.get(clientId);
+      if (prevTop !== undefined && prevTop !== top) {
+        el.animate(
+          [{ transform: `translateY(${prevTop - top}px)` }, { transform: "translateY(0)" }],
+          { duration: 250, easing: "ease-out" }
+        );
+      }
+    }
+
+    positionsRef.current = next;
+    // items is read for its identity (a new array on every add/update/remove)
+    // to know when to re-measure, not for its contents.
+  }, [items]);
+
+  return containerRef;
+}
+
 function nowForDateTimeLocal(): string {
   const d = new Date();
   d.setSeconds(0, 0);
@@ -41,6 +80,7 @@ function nowForDateTimeLocal(): string {
 
 export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOption[] }) {
   const { items, addItems, updateItem, removeItem } = useUploadBatch();
+  const itemsContainerRef = useSlideOnReorder(items);
   const [isDragging, setIsDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitSummary, setSubmitSummary] = useState<{ succeeded: number; failed: number } | null>(null);
@@ -445,24 +485,27 @@ export function UploadForm({ documentTypes }: { documentTypes: DocumentTypeOptio
             </div>
           </div>
 
-          {items.map((item, index) => (
-            <div
-              key={item.clientId}
-              className={`transition-opacity duration-200 ${
-                item.removing ? "pointer-events-none opacity-0" : "opacity-100"
-              }`}
-            >
-              <BatchItemCard
-                index={index}
-                item={item}
-                documentTypes={documentTypes}
-                submitting={submitting}
-                onChange={(patch) => updateItem(item.clientId, patch)}
-                onRemove={() => fadeOutAndRemove([item.clientId])}
-                onUpload={() => submitItems([item])}
-              />
-            </div>
-          ))}
+          <div ref={itemsContainerRef} className="space-y-4">
+            {items.map((item, index) => (
+              <div
+                key={item.clientId}
+                data-client-id={item.clientId}
+                className={`transition-opacity duration-200 ${
+                  item.removing ? "pointer-events-none opacity-0" : "opacity-100"
+                }`}
+              >
+                <BatchItemCard
+                  index={index}
+                  item={item}
+                  documentTypes={documentTypes}
+                  submitting={submitting}
+                  onChange={(patch) => updateItem(item.clientId, patch)}
+                  onRemove={() => fadeOutAndRemove([item.clientId])}
+                  onUpload={() => submitItems([item])}
+                />
+              </div>
+            ))}
+          </div>
 
           {submitSummary ? (
             <div
