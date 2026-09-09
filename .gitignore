@@ -10,6 +10,12 @@
 !.yarn/releases
 !.yarn/versions
 
+# this project uses bun (see bun.lock, package.json's trustedDependencies) —
+# lockfiles from any other package manager are stray, not a second source of truth
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
 # testing
 /coverage
 
