@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { cmDocuments } from "@/db/schema";
 import { getStorageAdapter } from "@/lib/storage";
 import { seedDemoData } from "@/db/seed-data";
+import { seedSampleDocuments } from "@/db/seed-sample-documents";
 
 // Public-demo self-heal: wipe every table back to empty and reseed the
 // baseline departments/document types/demo users/employees, on a schedule
@@ -52,6 +53,12 @@ export async function resetDemoData(): Promise<{ deletedFiles: number; deletedFi
     `);
     await seedDemoData(tx);
   });
+
+  // Deliberately outside the transaction above: createCmDocument() (which
+  // this calls into) reads/writes through the app's shared `db` client, a
+  // different connection than `tx` — it wouldn't see the just-truncated-and-
+  // reseeded rows until that transaction has actually committed.
+  await seedSampleDocuments();
 
   return { deletedFiles, deletedFileErrors };
 }
