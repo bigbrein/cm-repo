@@ -4,6 +4,7 @@ import { z } from "zod";
 import { withApiAuth } from "@/lib/session";
 import { db } from "@/lib/db";
 import { departments as departmentsTable } from "@/db/schema";
+import { rateLimitOrResponse } from "@/lib/rate-limit";
 
 export async function GET() {
   return withApiAuth(async () => {
@@ -32,7 +33,10 @@ function deriveDepartmentCode(name: string, taken: Set<string>): string {
 // merging) stays an admin/DB concern.
 export async function POST(request: NextRequest) {
   return withApiAuth(
-    async () => {
+    async (user) => {
+      const limited = await rateLimitOrResponse(`create-department:${user.id}`, 10, 10 * 60_000);
+      if (limited) return limited;
+
       const body = await request.json().catch(() => null);
       const parsed = CreateSchema.safeParse(body);
       if (!parsed.success) {

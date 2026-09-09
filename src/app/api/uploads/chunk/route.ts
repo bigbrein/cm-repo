@@ -1,12 +1,16 @@
 import type { NextRequest } from "next/server";
 import { withApiAuth } from "@/lib/session";
 import { appendChunk } from "@/lib/chunked-upload";
+import { rateLimitOrResponse } from "@/lib/rate-limit";
 
 // FR-UPL-10: one chunk of a large file, sent sequentially by the client
 // and appended to a staging file (see lib/chunked-upload.ts).
 export async function POST(request: NextRequest) {
   return withApiAuth(
-    async () => {
+    async (user) => {
+      const limited = await rateLimitOrResponse(`upload-chunk:${user.id}`, 150, 10 * 60_000);
+      if (limited) return limited;
+
       const formData = await request.formData();
       const uploadId = String(formData.get("uploadId") ?? "");
       const chunk = formData.get("chunk");

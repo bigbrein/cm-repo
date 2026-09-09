@@ -7,6 +7,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   InvalidInput: "Please check your name, email, and password (minimum 8 characters).",
   EmailInUse: "An account with that email already exists.",
   Configuration: "Self-service registration is disabled. Contact your administrator.",
+  TooManyRequests: "Too many registration attempts. Please try again later.",
 };
 
 export default async function RegisterPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {

@@ -15,6 +15,13 @@
       "when": 1788164421786,
       "tag": "0001_audit_log_immutability",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788705340912,
+      "tag": "0002_bizarre_thaddeus_ross",
+      "breakpoints": true
     }
   ]
 }

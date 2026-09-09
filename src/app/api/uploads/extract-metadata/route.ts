@@ -9,6 +9,7 @@ import {
   type ExtractedDocumentDetails,
 } from "@/lib/metadata-extraction";
 import { detectUploadFormat, extractTextForMetadata } from "@/lib/upload-formats";
+import { rateLimitOrResponse } from "@/lib/rate-limit";
 
 // FR-UPL-5: async metadata extraction, pre-populating the form without
 // persisting anything (FR-UPL-7 still requires explicit user confirmation).
@@ -22,7 +23,10 @@ const MAX_CONTENT_EXTRACTION_BYTES = 15 * 1024 * 1024;
 
 export async function POST(request: NextRequest) {
   return withApiAuth(
-    async () => {
+    async (user) => {
+      const limited = await rateLimitOrResponse(`extract-metadata:${user.id}`, 40, 10 * 60_000);
+      if (limited) return limited;
+
       const formData = await request.formData();
       const filePart = formData.get("file");
       const fileName =

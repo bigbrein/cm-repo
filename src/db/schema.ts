@@ -9,7 +9,7 @@
 
 import { nanoid } from "nanoid";
 import type { InferSelectModel, InferInsertModel } from "drizzle-orm";
-import { pgTable, pgEnum, text, boolean, integer, timestamp, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, pgEnum, text, boolean, integer, timestamp, jsonb, index, uniqueIndex, primaryKey } from "drizzle-orm/pg-core";
 
 // ---------------------------------------------------------------------------
 // Identity & Authorization (3.1 Authentication & Authorization)
@@ -295,6 +295,25 @@ export const auditLogs = pgTable(
     index("audit_log_cm_document_id_idx").on(table.cmDocumentId),
     index("audit_log_created_at_idx").on(table.createdAt),
   ]
+);
+
+// ---------------------------------------------------------------------------
+// Rate limiting — public demo abuse/cost protection
+// ---------------------------------------------------------------------------
+
+// Fixed-window counter, one row per (key, window). Backed by Postgres rather
+// than an in-memory map because Vercel serverless functions don't share
+// memory across instances/cold starts — a shared DB row is the only thing
+// that makes the count correct across them without adding new infra (Redis,
+// etc.) just for a demo.
+export const rateLimitBuckets = pgTable(
+  "rate_limit_bucket",
+  {
+    key: text("key").notNull(),
+    windowStart: timestamp("windowStart", { mode: "date" }).notNull(),
+    count: integer("count").notNull().default(1),
+  },
+  (table) => [primaryKey({ columns: [table.key, table.windowStart] })]
 );
 
 export type User = InferSelectModel<typeof users>;

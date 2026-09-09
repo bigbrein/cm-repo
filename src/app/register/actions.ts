@@ -1,12 +1,14 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { eq, count } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { users } from "@/db/schema";
 import { writeAuditLog } from "@/lib/audit";
+import { checkRateLimit, clientIp } from "@/lib/rate-limit";
 
 // FR-AUTH-7 (Could): basic registration page for provisioning internal
 // accounts where self-service registration is enabled (ENABLE_DEV_LOGIN).
@@ -24,6 +26,15 @@ const RegisterSchema = z.object({
 export async function registerAction(formData: FormData): Promise<void> {
   if (process.env.ENABLE_DEV_LOGIN === "false") {
     redirect("/login?error=Configuration");
+  }
+
+  // Self-service account creation, gated by IP rather than a user id —
+  // there's no authenticated user yet at this point in the flow. Public-demo
+  // abuse protection (spam accounts), not a real production auth control.
+  const ip = clientIp(await headers());
+  const rateLimit = await checkRateLimit(`register:${ip}`, 5, 60 * 60_000);
+  if (!rateLimit.allowed) {
+    redirect("/register?error=TooManyRequests");
   }
 
   const parsed = RegisterSchema.safeParse({

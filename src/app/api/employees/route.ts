@@ -5,6 +5,7 @@ import { withApiAuth } from "@/lib/session";
 import { createManualEmployee } from "@/lib/employees";
 import { db } from "@/lib/db";
 import { employees } from "@/db/schema";
+import { rateLimitOrResponse } from "@/lib/rate-limit";
 
 const ManualEmployeeSchema = z.object({
   employeeId: z.string().min(1).max(50),
@@ -21,6 +22,9 @@ const ManualEmployeeSchema = z.object({
 export async function POST(request: NextRequest) {
   return withApiAuth(
     async (user) => {
+      const limited = await rateLimitOrResponse(`create-employee:${user.id}`, 20, 10 * 60_000);
+      if (limited) return limited;
+
       const body = await request.json().catch(() => null);
       const parsed = ManualEmployeeSchema.safeParse(body);
       if (!parsed.success) {

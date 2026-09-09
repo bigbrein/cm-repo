@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { withApiAuth } from "@/lib/session";
 import { createCmDocument, UploadValidationError } from "@/lib/documents";
 import { finalizeChunkedUpload } from "@/lib/chunked-upload";
+import { rateLimitOrResponse } from "@/lib/rate-limit";
 
 // FR-UPL-1/7/8: creates one CM Document from one batch item — either an
 // uploaded file (direct or assembled from chunks, FR-UPL-10) or composed
@@ -11,6 +12,9 @@ import { finalizeChunkedUpload } from "@/lib/chunked-upload";
 export async function POST(request: NextRequest) {
   return withApiAuth(
     async (user) => {
+      const limited = await rateLimitOrResponse(`upload-items:${user.id}`, 30, 10 * 60_000);
+      if (limited) return limited;
+
       const formData = await request.formData();
 
       const employeeId = String(formData.get("employeeId") ?? "");
