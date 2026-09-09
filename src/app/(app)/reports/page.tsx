@@ -8,6 +8,10 @@ import { getCmStatus } from "@/lib/status";
 import { StatusBadge } from "@/components/status-badge";
 import { AccessDenied } from "@/components/access-denied";
 import { BarList } from "@/components/bar-list";
+import { Pagination } from "@/components/pagination";
+import { PageSizeField } from "@/components/page-size-field";
+import { resolvePageSize } from "@/lib/resolve-page-size";
+import { DEFAULT_PAGE_SIZE } from "@/lib/pagination-prefs";
 import {
   getStatusReport,
   getExpiringSoonReport,
@@ -36,6 +40,24 @@ const EXPIRING_SOON_DAYS = Number(process.env.EXPIRING_SOON_DAYS ?? 30);
 interface ReportSearchParams {
   type?: string;
   departmentId?: string;
+  page?: string;
+  pageSize?: string;
+}
+
+// The three status-table report types are the only ones with per-row data
+// to paginate — the "By ..." reports are already-aggregated bar charts
+// (one bar per category, not a page-able list of rows).
+const PAGINATED_TYPES = new Set<ReportType>(["active", "expired", "expiringSoon"]);
+
+function buildHref(current: ReportSearchParams, overrides: Partial<ReportSearchParams>) {
+  const merged = { ...current, ...overrides };
+  const params = new URLSearchParams();
+  if (merged.type && merged.type !== "active") params.set("type", merged.type);
+  if (merged.departmentId) params.set("departmentId", merged.departmentId);
+  if (merged.page && merged.page !== "1") params.set("page", merged.page);
+  if (merged.pageSize && merged.pageSize !== String(DEFAULT_PAGE_SIZE)) params.set("pageSize", merged.pageSize);
+  const qs = params.toString();
+  return qs ? `/reports?${qs}` : "/reports";
 }
 
 export default async function ReportsPage({ searchParams }: { searchParams: Promise<ReportSearchParams> }) {
@@ -49,10 +71,24 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   // Auditor) — department-scoped roles already only ever see their own
   // department via cmDocumentScopeWhere (FR-REP-8).
   const departmentId = !user.permissions.isDepartmentScoped ? sp.departmentId : undefined;
+  const page = Number(sp.page) > 0 ? Number(sp.page) : 1;
+  const pageSize = await resolvePageSize(sp.pageSize);
+  const spWithPageSize = { ...sp, pageSize: String(pageSize) };
 
   const departments = !user.permissions.isDepartmentScoped
     ? await db.select().from(departmentsTable).orderBy(asc(departmentsTable.name))
     : [];
+
+  // Only one of these ever actually runs per request (the other two
+  // branches are `null`), but computing it once up front — rather than
+  // inline in the JSX below — means both the table and the Pagination
+  // component read the same result instead of the report re-running twice.
+  const statusReport =
+    type === "active" || type === "expired"
+      ? await getStatusReport(user, type === "active" ? "ACTIVE" : "EXPIRED", departmentId, { page, pageSize })
+      : type === "expiringSoon"
+        ? await getExpiringSoonReport(user, EXPIRING_SOON_DAYS, departmentId, { page, pageSize })
+        : null;
 
   return (
     <div>
@@ -62,7 +98,10 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         {REPORT_TYPES.map((r) => (
           <Link
             key={r.key}
-            href={`/reports?type=${r.key}${departmentId ? `&departmentId=${departmentId}` : ""}`}
+            // Switching report type always starts back at page 1 — a page
+            // number from a different report's pagination isn't meaningful
+            // here (see the buildHref default-page comment above).
+            href={buildHref(spWithPageSize, { type: r.key, page: "1" })}
             className={`rounded-t-md px-3 py-2 text-sm font-medium ${
               type === r.key
                 ? "border-b-2 border-primary text-foreground"
@@ -74,27 +113,30 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         ))}
       </nav>
 
-      {!user.permissions.isDepartmentScoped ? (
-        <form method="GET" className="mt-4 flex items-end gap-3">
+      {!user.permissions.isDepartmentScoped || PAGINATED_TYPES.has(type) ? (
+        <form method="GET" className="mt-4 flex flex-wrap items-end gap-3">
           <input type="hidden" name="type" value={type} />
-          <div>
-            <label htmlFor="departmentId" className="block text-xs font-medium text-muted-foreground">
-              Department
-            </label>
-            <select
-              id="departmentId"
-              name="departmentId"
-              defaultValue={departmentId ?? ""}
-              className="mt-1 rounded-md border border-border bg-surface px-3 py-2 text-sm"
-            >
-              <option value="">All departments</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          {!user.permissions.isDepartmentScoped ? (
+            <div>
+              <label htmlFor="departmentId" className="block text-xs font-medium text-muted-foreground">
+                Department
+              </label>
+              <select
+                id="departmentId"
+                name="departmentId"
+                defaultValue={departmentId ?? ""}
+                className="mt-1 rounded-md border border-border bg-surface px-3 py-2 text-sm"
+              >
+                <option value="">All departments</option>
+                {departments.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+          {PAGINATED_TYPES.has(type) ? <PageSizeField defaultValue={pageSize} /> : null}
           <button
             type="submit"
             className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-surface-muted"
@@ -105,14 +147,13 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
       ) : null}
 
       <div className="mt-6">
-        {type === "active" ? <StatusReportTable rows={await getStatusReport(user, "ACTIVE", departmentId)} /> : null}
-        {type === "expired" ? <StatusReportTable rows={await getStatusReport(user, "EXPIRED", departmentId)} /> : null}
-        {type === "expiringSoon" ? (
+        {(type === "active" || type === "expired") && statusReport ? <StatusReportTable rows={statusReport.rows} /> : null}
+        {type === "expiringSoon" && statusReport ? (
           <>
             <p className="mb-3 text-sm text-muted-foreground">
               CMs expiring within the next {EXPIRING_SOON_DAYS} days.
             </p>
-            <StatusReportTable rows={await getExpiringSoonReport(user, EXPIRING_SOON_DAYS, departmentId)} />
+            <StatusReportTable rows={statusReport.rows} />
           </>
         ) : null}
         {type === "byType" ? <BarList data={await getCountByType(user, departmentId)} /> : null}
@@ -120,11 +161,19 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         {type === "byUploader" ? <BarList data={await getCountByUploader(user, departmentId)} /> : null}
         {type === "monthlyTrends" ? <MonthlyTrendsChart data={await getMonthlyTrends(user, 12, departmentId)} /> : null}
       </div>
+
+      {statusReport ? (
+        <Pagination
+          page={page}
+          pageCount={statusReport.pageCount}
+          hrefForPage={(p) => buildHref(spWithPageSize, { page: String(p) })}
+        />
+      ) : null}
     </div>
   );
 }
 
-type StatusReportRow = Awaited<ReturnType<typeof getStatusReport>>[number];
+type StatusReportRow = Awaited<ReturnType<typeof getStatusReport>>["rows"][number];
 
 function StatusReportTable({ rows }: { rows: StatusReportRow[] }) {
   return (
@@ -168,14 +217,23 @@ function StatusReportTable({ rows }: { rows: StatusReportRow[] }) {
   );
 }
 
+// Bar height is computed in px, not as a CSS `%` — a percentage height only
+// resolves against a parent with an explicit height, and each column here
+// is an auto-sized flex item (sized by its own label + bar + label content),
+// so a `%` height on the bar was resolving to 0 against it.
+const CHART_BAR_MAX_PX = 140;
+
 function MonthlyTrendsChart({ data }: { data: { month: string; count: number }[] }) {
   const max = Math.max(1, ...data.map((d) => d.count));
   return (
     <div className="flex h-48 items-end gap-2 rounded-lg border border-border p-4">
       {data.map((d) => (
-        <div key={d.month} className="flex flex-1 flex-col items-center gap-1">
+        <div key={d.month} className="flex flex-1 flex-col items-center justify-end gap-1">
           <div className="text-xs font-medium tabular-nums">{d.count}</div>
-          <div className="w-full rounded-t bg-primary" style={{ height: `${Math.max(2, (d.count / max) * 100)}%` }} />
+          <div
+            className="w-full rounded-t bg-primary"
+            style={{ height: `${Math.max(4, Math.round((d.count / max) * CHART_BAR_MAX_PX))}px` }}
+          />
           <div className="text-[10px] text-muted-foreground">{d.month.slice(2)}</div>
         </div>
       ))}

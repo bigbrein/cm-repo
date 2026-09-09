@@ -1,9 +1,12 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/session";
 import { queryAuditLogs } from "@/lib/audit-query";
 import { auditActionEnum } from "@/db/schema";
 import { AccessDenied } from "@/components/access-denied";
+import { Pagination } from "@/components/pagination";
+import { PageSizeField } from "@/components/page-size-field";
+import { resolvePageSize } from "@/lib/resolve-page-size";
+import { DEFAULT_PAGE_SIZE } from "@/lib/pagination-prefs";
 
 // 3.9 Audit Logging — Administrator/Auditor viewer over the append-only
 // audit_log table (see lib/audit.ts for the write path and
@@ -31,6 +34,7 @@ interface AuditSearchParams {
   from?: string;
   to?: string;
   page?: string;
+  pageSize?: string;
 }
 
 function buildHref(current: AuditSearchParams, overrides: Partial<AuditSearchParams>) {
@@ -41,6 +45,7 @@ function buildHref(current: AuditSearchParams, overrides: Partial<AuditSearchPar
   if (merged.from) params.set("from", merged.from);
   if (merged.to) params.set("to", merged.to);
   if (merged.page && merged.page !== "1") params.set("page", merged.page);
+  if (merged.pageSize && merged.pageSize !== String(DEFAULT_PAGE_SIZE)) params.set("pageSize", merged.pageSize);
   const qs = params.toString();
   return qs ? `/audit-log?${qs}` : "/audit-log";
 }
@@ -56,6 +61,8 @@ export default async function AuditLogPage({ searchParams }: { searchParams: Pro
     ? (sp.action as (typeof auditActionEnum.enumValues)[number])
     : undefined;
   const page = Number(sp.page) > 0 ? Number(sp.page) : 1;
+  const pageSize = await resolvePageSize(sp.pageSize);
+  const spWithPageSize = { ...sp, pageSize: String(pageSize) };
 
   const { rows, total, pageCount } = await queryAuditLogs({
     action: validAction,
@@ -63,6 +70,7 @@ export default async function AuditLogPage({ searchParams }: { searchParams: Pro
     from: sp.from,
     to: sp.to,
     page,
+    pageSize,
   });
 
   return (
@@ -132,6 +140,7 @@ export default async function AuditLogPage({ searchParams }: { searchParams: Pro
             className="mt-1 rounded-md border border-border px-3 py-2 text-sm bg-surface"
           />
         </div>
+        <PageSizeField defaultValue={pageSize} />
         <button
           type="submit"
           className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary-hover"
@@ -187,21 +196,7 @@ export default async function AuditLogPage({ searchParams }: { searchParams: Pro
         </table>
       </div>
 
-      {pageCount > 1 ? (
-        <div className="mt-4 flex items-center justify-center gap-2 text-sm">
-          {Array.from({ length: pageCount }, (_, i) => i + 1).map((p) => (
-            <Link
-              key={p}
-              href={buildHref(sp, { page: String(p) })}
-              className={`rounded-md px-3 py-1 ${
-                p === page ? "bg-primary text-primary-foreground" : "hover:bg-surface-muted"
-              }`}
-            >
-              {p}
-            </Link>
-          ))}
-        </div>
-      ) : null}
+      <Pagination page={page} pageCount={pageCount} hrefForPage={(p) => buildHref(spWithPageSize, { page: String(p) })} />
     </div>
   );
 }

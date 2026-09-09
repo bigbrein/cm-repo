@@ -1,10 +1,14 @@
 import { redirect } from "next/navigation";
-import { asc, desc, eq } from "drizzle-orm";
+import { asc, count, desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { employees as employeesTable, departments, auditLogs } from "@/db/schema";
 import { getCurrentUser } from "@/lib/session";
 import { AccessDenied } from "@/components/access-denied";
 import { SubmitButton } from "@/components/submit-button";
+import { Pagination } from "@/components/pagination";
+import { PageSizeField } from "@/components/page-size-field";
+import { resolvePageSize } from "@/lib/resolve-page-size";
+import { DEFAULT_PAGE_SIZE } from "@/lib/pagination-prefs";
 import { triggerSyncAction } from "./actions";
 
 const STATUS_STYLES: Record<string, string> = {
@@ -13,17 +17,43 @@ const STATUS_STYLES: Record<string, string> = {
   ON_LEAVE: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
 };
 
-export default async function AdminEmployeesPage() {
+interface AdminEmployeesSearchParams {
+  page?: string;
+  pageSize?: string;
+}
+
+function buildHref(current: AdminEmployeesSearchParams, overrides: Partial<AdminEmployeesSearchParams>) {
+  const merged = { ...current, ...overrides };
+  const params = new URLSearchParams();
+  if (merged.page && merged.page !== "1") params.set("page", merged.page);
+  if (merged.pageSize && merged.pageSize !== String(DEFAULT_PAGE_SIZE)) params.set("pageSize", merged.pageSize);
+  const qs = params.toString();
+  return qs ? `/admin/employees?${qs}` : "/admin/employees";
+}
+
+export default async function AdminEmployeesPage({
+  searchParams,
+}: {
+  searchParams: Promise<AdminEmployeesSearchParams>;
+}) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
   if (!user.permissions.canManageIntegrations) return <AccessDenied />;
 
-  const [employeeRows, [lastSync]] = await Promise.all([
+  const sp = await searchParams;
+  const page = Number(sp.page) > 0 ? Number(sp.page) : 1;
+  const pageSize = await resolvePageSize(sp.pageSize);
+  const spWithPageSize = { ...sp, pageSize: String(pageSize) };
+
+  const [employeeRows, [totalRow], [lastSync]] = await Promise.all([
     db
       .select({ employee: employeesTable, department: departments })
       .from(employeesTable)
       .innerJoin(departments, eq(employeesTable.departmentId, departments.id))
-      .orderBy(asc(employeesTable.lastName), asc(employeesTable.firstName)),
+      .orderBy(asc(employeesTable.lastName), asc(employeesTable.firstName))
+      .limit(pageSize)
+      .offset((page - 1) * pageSize),
+    db.select({ total: count() }).from(employeesTable),
     db
       .select()
       .from(auditLogs)
@@ -32,6 +62,8 @@ export default async function AdminEmployeesPage() {
       .limit(1),
   ]);
   const employees = employeeRows.map((r) => ({ ...r.employee, department: r.department }));
+  const total = totalRow?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
   const sfMode = process.env.SF_MODE === "odata" ? "Live SuccessFactors OData" : "Mock (demo data)";
   const summary = lastSync?.metadata as
@@ -78,6 +110,21 @@ export default async function AdminEmployeesPage() {
         </form>
       </div>
 
+      <form method="GET" className="flex items-end justify-between gap-3">
+        <span className="text-sm text-muted-foreground">
+          {total} employee{total === 1 ? "" : "s"}
+        </span>
+        <div className="flex items-end gap-3">
+          <PageSizeField defaultValue={pageSize} />
+          <button
+            type="submit"
+            className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-surface-muted"
+          >
+            Apply
+          </button>
+        </div>
+      </form>
+
       <div className="overflow-x-auto rounded-lg border border-border">
         <table className="w-full min-w-180 text-left text-sm">
           <thead className="bg-surface-muted text-xs uppercase tracking-wide text-muted-foreground">
@@ -120,6 +167,8 @@ export default async function AdminEmployeesPage() {
           </tbody>
         </table>
       </div>
+
+      <Pagination page={page} pageCount={pageCount} hrefForPage={(p) => buildHref(spWithPageSize, { page: String(p) })} />
     </div>
   );
 }

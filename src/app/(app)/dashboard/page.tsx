@@ -6,6 +6,10 @@ import { getCmStatus } from "@/lib/status";
 import { StatusBadge } from "@/components/status-badge";
 import { RecordActionsMenu } from "@/components/record-actions-menu";
 import { AccessDenied } from "@/components/access-denied";
+import { Pagination } from "@/components/pagination";
+import { PageSizeField } from "@/components/page-size-field";
+import { resolvePageSize } from "@/lib/resolve-page-size";
+import { DEFAULT_PAGE_SIZE } from "@/lib/pagination-prefs";
 
 // 3.6 Home Dashboard + 3.7 Search & Filtering
 
@@ -26,10 +30,6 @@ interface DashboardSearchParams {
   page?: string;
   pageSize?: string;
 }
-
-const MIN_PAGE_SIZE = 1;
-const MAX_PAGE_SIZE = 20;
-const DEFAULT_PAGE_SIZE = 10;
 
 function buildHref(current: DashboardSearchParams, overrides: Partial<DashboardSearchParams>) {
   const merged = { ...current, ...overrides };
@@ -55,9 +55,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const sort = (COLUMNS.some((c) => c.key === sp.sort) ? sp.sort : "dateIssued") as SortColumn;
   const direction = sp.direction === "asc" ? "asc" : "desc";
   const page = Number(sp.page) > 0 ? Number(sp.page) : 1;
-  const pageSize = Number(sp.pageSize) > 0
-    ? Math.min(MAX_PAGE_SIZE, Math.max(MIN_PAGE_SIZE, Math.trunc(Number(sp.pageSize))))
-    : DEFAULT_PAGE_SIZE;
+  const pageSize = await resolvePageSize(sp.pageSize);
+  // Carries the resolved size (whether it came from the URL or the
+  // per-viewer cookie) into every link built from here on, so a sort/page
+  // click doesn't silently drop back to the default.
+  const spWithPageSize = { ...sp, pageSize: String(pageSize) };
 
   const { rows, total, pageCount } = await queryCmDocuments(user, { q: sp.q, status, sort, direction, page, pageSize });
 
@@ -99,21 +101,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             <option value="ALL">All</option>
           </select>
         </div>
-        <div>
-          <label htmlFor="pageSize" className="block text-xs font-medium text-muted-foreground">
-            Per page
-          </label>
-          <input
-            id="pageSize"
-            name="pageSize"
-            type="number"
-            min={MIN_PAGE_SIZE}
-            max={MAX_PAGE_SIZE}
-            step={1}
-            defaultValue={pageSize}
-            className="mt-1 w-20 rounded-md border border-border px-3 py-2 text-sm bg-surface"
-          />
-        </div>
+        <PageSizeField defaultValue={pageSize} />
         <input type="hidden" name="sort" value={sort} />
         <input type="hidden" name="direction" value={direction} />
         <button
@@ -134,7 +122,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
                 return (
                   <th key={col.key} className="px-4 py-2">
                     <Link
-                      href={buildHref(sp, { sort: col.key, direction: nextDirection, page: "1" })}
+                      href={buildHref(spWithPageSize, { sort: col.key, direction: nextDirection, page: "1" })}
                       className="inline-flex items-center gap-1 hover:text-foreground"
                     >
                       {col.label}
@@ -199,21 +187,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         </table>
       </div>
 
-      {pageCount > 1 ? (
-        <div className="mt-4 flex items-center justify-center gap-2 text-sm">
-          {Array.from({ length: pageCount }, (_, i) => i + 1).map((p) => (
-            <Link
-              key={p}
-              href={buildHref(sp, { page: String(p) })}
-              className={`rounded-md px-3 py-1 ${
-                p === page ? "bg-primary text-primary-foreground" : "hover:bg-surface-muted"
-              }`}
-            >
-              {p}
-            </Link>
-          ))}
-        </div>
-      ) : null}
+      <Pagination page={page} pageCount={pageCount} hrefForPage={(p) => buildHref(spWithPageSize, { page: String(p) })} />
     </div>
   );
 }

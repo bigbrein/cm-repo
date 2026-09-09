@@ -18,7 +18,10 @@ function baseWhere(user: CurrentUser, departmentId?: string) {
   );
 }
 
-const REPORT_ROW_LIMIT = 200;
+interface ReportPageParams {
+  page: number;
+  pageSize: number;
+}
 
 function reportRowsQuery() {
   return db
@@ -33,24 +36,49 @@ function toReportRow(r: Awaited<ReturnType<typeof reportRowsQuery>>[number]) {
   return { ...r.cmDocument, employee: { ...r.employee, department: r.department }, documentType: r.documentType };
 }
 
+async function paginatedReport(
+  where: ReturnType<typeof and>,
+  orderBy: ReturnType<typeof desc> | ReturnType<typeof asc>,
+  { page, pageSize }: ReportPageParams
+) {
+  const [rawRows, [totalRow]] = await Promise.all([
+    reportRowsQuery()
+      .where(where)
+      .orderBy(orderBy)
+      .limit(pageSize)
+      .offset((page - 1) * pageSize),
+    db
+      .select({ total: count() })
+      .from(cmDocuments)
+      .innerJoin(employees, eq(cmDocuments.employeeId, employees.id))
+      .where(where),
+  ]);
+  const total = totalRow?.total ?? 0;
+  return { rows: rawRows.map(toReportRow), total, pageCount: Math.max(1, Math.ceil(total / pageSize)) };
+}
+
 /** FR-REP-1/2: Active or Expired CMs, org-wide or filtered by department. */
-export async function getStatusReport(user: CurrentUser, status: "ACTIVE" | "EXPIRED", departmentId?: string) {
-  const rows = await reportRowsQuery()
-    .where(and(baseWhere(user, departmentId), status === "ACTIVE" ? activeStatusWhere() : expiredStatusWhere()))
-    .orderBy(desc(cmDocuments.dateIssued))
-    .limit(REPORT_ROW_LIMIT);
-  return rows.map(toReportRow);
+export async function getStatusReport(
+  user: CurrentUser,
+  status: "ACTIVE" | "EXPIRED",
+  departmentId: string | undefined,
+  pageParams: ReportPageParams
+) {
+  const where = and(baseWhere(user, departmentId), status === "ACTIVE" ? activeStatusWhere() : expiredStatusWhere());
+  return paginatedReport(where, desc(cmDocuments.dateIssued), pageParams);
 }
 
 /** FR-REP-6: CMs approaching expiry within a configurable window. */
-export async function getExpiringSoonReport(user: CurrentUser, days: number, departmentId?: string) {
+export async function getExpiringSoonReport(
+  user: CurrentUser,
+  days: number,
+  departmentId: string | undefined,
+  pageParams: ReportPageParams
+) {
   const now = new Date();
   const horizon = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
-  const rows = await reportRowsQuery()
-    .where(and(baseWhere(user, departmentId), gte(cmDocuments.expiryDate, now), lte(cmDocuments.expiryDate, horizon)))
-    .orderBy(asc(cmDocuments.expiryDate))
-    .limit(REPORT_ROW_LIMIT);
-  return rows.map(toReportRow);
+  const where = and(baseWhere(user, departmentId), gte(cmDocuments.expiryDate, now), lte(cmDocuments.expiryDate, horizon));
+  return paginatedReport(where, asc(cmDocuments.expiryDate), pageParams);
 }
 
 /** FR-REP-3: CMs by Type breakdown. */
