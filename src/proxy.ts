@@ -20,6 +20,11 @@ const PUBLIC_PATHS = [
   "/sitemap.xml",
   "/opengraph-image",
   "/twitter-image",
+  // Triggered by an external scheduler (Vercel Cron or otherwise), never by
+  // a logged-in browser — there's no session cookie to check here. Auth is
+  // its own bearer-token check against CRON_SECRET inside the route itself
+  // (api/cron/reset-demo/routedf.ts), not the session gate below.
+  "/api/cron",
 ];
 
 export default auth((req) => {
